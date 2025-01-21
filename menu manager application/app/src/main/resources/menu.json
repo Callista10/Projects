@@ -1,0 +1,25 @@
+{
+  "Appentisers" : [ {
+    "price" : "9.99",
+    "name" : "Calamari",
+    "description" : "Fried calamari with a side of marinara sauce."
+  }, {
+    "price" : "7.99",
+    "name" : "Bruschetta",
+    "description" : "Grilled bread with garlic, tomatoes, olive oil, and basil."
+  } ],
+  "Main" : [ {
+    "price" : "22.99",
+    "name" : "Salmon",
+    "description" : "Atlantic salmon, grilled and served with a lemon butter sauce."
+  }, {
+    "price" : "99.99",
+    "name" : "Wagyu",
+    "description" : "A5 premium Japanese Wagyu."
+  } ],
+  "Dessert" : [ {
+    "price" : "8.99",
+    "name" : "Tiramisu",
+    "description" : "Ladyfingers dipped in coffee, layered with a whipped mixture of eggs, sugar, and mascarpone cheese, flavored with cocoa."
+  } ]
+}
