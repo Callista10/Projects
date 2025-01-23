@@ -17,11 +17,15 @@ Here are some key projects that are included in this portfolio
    
 6. **[Basic discussion forum]**
    A basic messaging tool that allows users to log in, type username and password. Showing friend list if log in success, and error message if log in fails.
-   **Tools/Software**: Python, Socketio, Flask
+   **Tools/Software used**: Python, Socketio, Flask
    
-8. **[3D Spaceship Model]**
+7. **[Triangle Search]**
+   A software that supports simple geometry processing pipeline. It consists of a generator program made with Python that generates sets of 2D points within a neighbourhood constraint and a searcher program made with C that calculates the three closest points and checks if it forms a triangle. The generator interpolates the searcher program.
+   **Tools/Software used**: Python, C, git
 
-9. **[3D Game Character Model]**
+9. **[3D Spaceship Model]**
 
-10. **[3D Diorama Design Model]**
+10. **[3D Game Character Model]**
+
+11. **[3D Diorama Design Model]**
 
