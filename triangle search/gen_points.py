@@ -7,14 +7,6 @@ import math
 def euclidean_distance(a, b):
     return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
-'''
-USYD CODE CITATION ACKNOWLEDGEMENT
-I declare that the following lines of code have been referenced from the website
-titled: 'How to print to stderr in Python'
-
-Original URL
-https://blogboard.io/blog/knowledge/python-print-to-stderr/
-'''
 # generates the points with the parameters N, mindist and rseed (optional)
 def generate_points(N, mindist, rseed=None):
     if N < 0: # if N less than zero then print the message to stderr and exit with -1
@@ -26,10 +18,6 @@ def generate_points(N, mindist, rseed=None):
     elif N > (10000 / (math.pi * (mindist ** 2))): # exit with -3 if N is greater than 1000/(pi x mindist^2) and print the message to stderr
         print("point saturation", file=sys.stderr)
         sys.exit(-3)
-
-        '''
-        end of referenced code
-        '''
 
     random.seed(rseed)
     points = []
