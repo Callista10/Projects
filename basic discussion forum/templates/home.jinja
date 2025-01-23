@@ -1,0 +1,149 @@
+{% extends 'base.jinja' %}
+
+{% block content %} 
+   <style>
+    nav {
+        border-bottom: 1px solid black;
+        overflow: auto
+    }
+
+    #message_box {
+        border: 1px solid black; 
+        height: 400px; 
+        width: 800px; 
+        overflow: auto;
+        padding: 2px;
+    }
+
+    .text  {
+        margin-top: 2px;
+        margin-bottom: 2px;
+    }
+
+</style>
+<nav style="border-bottom: 1px solid black;">
+    <ol style="float: right">
+        <li style="display:inline-block">Username:  {{ username }} </li>
+    </ol>
+</nav>
+
+<h1>Messaging App </h1>
+
+<div id="message_box"></div>
+
+<div id="chat_box">
+<p  class="text">Chat with: </p>
+<input id="receiver" placeholder="username">
+<button onclick="join_room()">Chat</button>
+
+</div>
+<div style="position: absolute; top: 20%; left: 90%; transform: translate(-50%, -50%); padding: 10px;">
+  <div id="friendlist" style="margin-bottom: 5px;">
+    <p class="text"><strong>Friend</strong></p>
+    <p>Bob</p>
+  </div>
+</div>
+
+
+<div id="input_box" style="display: none" >
+<p class="text">Message: </p>
+<input id="message" placeholder="message">
+<button onclick="send()">Send</button>
+<button onclick="leave()">Leave Room</button>
+</div>
+
+<script src="/static/js/libs/socket.io.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+
+<script>
+    let room_id = 0;
+
+
+    $("#message").on("keyup", (e) => {
+        if (e.key == "Enter") {
+            send();
+        }
+    })
+
+     $("#receiver").on("keyup", (e) => {
+        if (e.key == "Enter") {
+            join_room();
+        }
+    })
+
+    $(document).ready(() => {
+        
+        if (Cookies.get("room_id") == undefined) {
+            return;
+        }
+        $("#chat_box").hide();
+        $("#input_box").show();
+        room_id = parseInt(Cookies.get("room_id"));
+    })
+    
+    let username = "{{ username }}";
+
+    Cookies.set('username', username);
+
+    const socket = io();
+    socket.on("incoming", (msg, color="black") => {
+        add_message(msg, color);
+    });
+
+    socket.on("receive_message", (encryptedMessage, secretKey, receiver) => {
+        const decryptedMessage = CryptoJS.AES.decrypt(encryptedMessage, secretKey).toString(CryptoJS.enc.Utf8);
+        console.log(decryptedMessage);
+    });
+
+    function generateSecretKey() {
+        var key = CryptoJS.lib.WordArray.random(32);
+        return key.toString(CryptoJS.enc.Hex);
+    }
+
+      
+    function send() {
+        let receiver = $("#receiver").val();
+        let message = $("#message").val();
+        $("#message").val("");
+
+        const secretKey = generateSecretKey();
+        const encryptedMessage = CryptoJS.AES.encrypt(message, secretKey).toString();
+        socket.emit("send_message", encryptedMessage, secretKey, receiver);
+
+        socket.emit("send", username, message, room_id, secretKey);  
+    }
+
+    function join_room() {
+       
+        let receiver = $("#receiver").val();
+
+        socket.emit("join", username, receiver, (res) => {
+            if (typeof res != "number") {
+                alert(res);
+                return;
+            }
+            room_id = res;
+            Cookies.set("room_id", room_id);
+            $("#chat_box").hide();
+            $("#input_box").show();
+        });
+     
+    }
+
+    function leave() {
+        Cookies.remove("room_id");
+        socket.emit("leave", username, room_id);
+        $("#input_box").hide();
+        $("#chat_box").show();
+    }
+
+    function add_message(message, color) {
+        let box = $("#message_box");
+        let child = $(`<p style="color:${color}; margin: 0px;"></p>`).text(message);
+        box.append(child);
+    }
+    
+ 
+
+</script>
+{% endblock %}
