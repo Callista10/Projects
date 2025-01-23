@@ -23,7 +23,7 @@ Here are some key projects that are included in this portfolio
    A software that supports simple geometry processing pipeline. It consists of a generator program made with Python that generates sets of 2D points within a neighbourhood constraint and a searcher program made with C that calculates the three closest points and checks if it forms a triangle. The generator interpolates the searcher program.
    **Tools/Software used**: Python, C, git
 
-9. **[3D Spaceship Model]**
+9. **[3D Spacecraft Model]**
 
 10. **[3D Game Character Model]**
 
