@@ -13,13 +13,15 @@ Here are some key projects that are included in this portfolio
 
 4. **[Gomoku Boardgame]**
    Gomoku boardgame using C.
-   **Tools/Software used**: Git
+   **Tools/Software used**: C, Git
    
 6. **[Basic discussion forum]**
+   A basic messaging tool that allows users to log in, type username and password. Showing friend list if log in success, and error message if log in fails.
+   **Tools/Software**: Python, Socketio, Flask
+   
+8. **[3D Spaceship Model]**
 
-7. **[3D Spaceship Model]**
+9. **[3D Game Character Model]**
 
-8. **[3D Game Character Model]**
-
-9. **[3D Diorama Design Model]**
+10. **[3D Diorama Design Model]**
 
