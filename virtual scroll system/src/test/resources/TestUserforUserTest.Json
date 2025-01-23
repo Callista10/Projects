@@ -1,0 +1,22 @@
+[ {
+  "phone" : "987654321",
+  "hashedPassword" : "$2a$10$dxways2QKlsYbAwzO/lwXO2.mqowq16b0lv2M3.gDYlrV2WWymJgq",
+  "fullName" : "Root Admin",
+  "type" : "rootadmin",
+  "customID" : "rootadmin",
+  "email" : "rootadmin@example.com"
+}, {
+  "phone" : "0415975858",
+  "hashedPassword" : "$2a$10$Ti42K6lHco.FIH1xSuKE1.tWrD4OjcODAbcEJg0TCkuZcKvvikuny",
+  "fullName" : "Fiona C",
+  "type" : "general",
+  "customID" : "Fiona",
+  "email" : "fionachen@qq.com"
+}, {
+  "phone" : "123456789",
+  "hashedPassword" : "$2a$10$StV.XRtHsC92/maE85GvKuZmhFxt9c.n4EZ2S0VmcY4XNYCqfATEe",
+  "fullName" : "Admin",
+  "type" : "admin",
+  "customID" : "admin",
+  "email" : "admin@example.com"
+} ]
