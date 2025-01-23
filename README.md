@@ -12,12 +12,14 @@ Here are some key projects that are included in this portfolio
    **Tools/Software used**: GitHub, Jenkins 
 
 4. **[Gomoku Boardgame]**
+   Gomoku boardgame using C.
+   **Tools/Software used**: Git
+   
+6. **[Basic discussion forum]**
 
-5. **[Basic discussion forum]**
+7. **[3D Spaceship Model]**
 
-6. **[3D Spaceship Model]**
+8. **[3D Game Character Model]**
 
-7. **[3D Game Character Model]**
-
-8. **[3D Diorama Design Model]**
+9. **[3D Diorama Design Model]**
 
