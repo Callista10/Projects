@@ -1,0 +1,381 @@
+---
+title: "What factors influence house prices in New York?"
+subtitle: "L17G04: ZhenPeng, Callista, Sam, Richard & XiaoMa"
+format: 
+  revealjs:
+    callout-appearance: simple
+    slide-number: true
+    auto-slide: 20000
+    embed-resources: true
+    css: style.css
+---
+
+# Motivation {.bg-image1}
+<!--Slide 2: Motivation-->
+**Why is this important?**
+
+:::{.text-container}
+- Physical and social factors of an area
+- Predict and understand future housing market trends
+:::
+
+<!--Slide 3: Dataset Overview-->
+# Dataset Overview {.bg-image2}
+**Data set:** House Prices in New York `(housing-prices-ge19 (1).txt)`
+
+**Target variable:** Price
+
+```{r, message=FALSE}
+# load libraries
+library(tidyverse)
+library(dplyr)
+library(caret)
+library(scales)
+library(janitor)
+library(ggfortify)
+library(knitr)
+library(kableExtra)
+
+set.seed(123)
+
+raw_data <- read.delim("housing-prices-ge19 (1).txt") %>% clean_names
+``` 
+
+```{r, results='hide'}
+glimpse(raw_data)
+```
+<!--decided to drop the variable test, irrelevant-->
+
+```{r, class.source='small'}
+data = raw_data %>% select(-test)
+
+```
+
+
+:::{.smaller}
+| Summary       | Count |
+|----------------|-------:|
+| **Rows**       | 1,734 |
+| **Columns**    | 16    |
+:::
+
+**Variables:**  
+
+:::{.smaller}
+price, lot_size, waterfront, age, land_value, new_construct, central_air, fuel_type, heat_type, sewer_type, living_area, pct_college, bedrooms, fireplaces, bathrooms, rooms
+:::
+
+
+<!--Slide 4: Summary Stat-->
+# Summary Statistics {.bg-image3}
+```{r}
+smry = summary(data$price)
+```
+Price Summary Statistics
+
+| Min       | 1st Qu    |Median     |Mean       | 3rd Qu    |Max         |   
+|-----------|-----------|-----------|-----------|-----------|-----------:|
+|5000       |145000     |189700     |211545     |257290     |775000      |
+
+<!--Slide 5: Price Distribution-->
+# Price Distribution {.bg-image4}
+```{r}
+# original histogram
+ggplot(data, aes(x = price)) +
+  geom_histogram(bins = 80, color = "#d19b75", fill =  "#F4F2EC") +
+  labs(x = "Price ($)", y = "Count") +
+  scale_x_continuous(labels = scales::comma) +  # show commas instead of scientific notation
+  theme_classic(base_size = 10)
+```
+- right skewed
+
+# Transformations {.bg-image4}
+Apply log transformation:
+
+:::{.smaller}
+- `ln_Price = log(price)`
+- `ln_Lot.Size = log(lot_size)`
+- `ln_Land.Value = log(land_value)`
+
+
+Binary to factors: `new_construct`, `central_air`
+:::
+
+```{r}
+data <- data %>%
+  filter(lot_size != 0)
+
+# apply log transformation
+data = data %>%
+  mutate(
+    ln_Price = log(price),
+    ln_Lot.Size = log(lot_size),
+    ln_Land.Value = log(land_value),
+    new_construct = factor(if_else(new_construct == 1, "Yes", "No")), 
+    central_air = factor(if_else(central_air == 1, "Yes", "No"))
+  )
+
+# exclude the old variables
+ln_data = data %>% select(-price, -lot_size, -land_value)
+
+# new histogram
+ggplot(ln_data, aes(x = ln_Price)) +
+  geom_histogram(bins = 80, color = "#d19b75", fill =  "#F4F2EC") +
+  labs(x = "ln_Price ($)", y = "Count") +
+  theme_classic(base_size = 10)
+
+
+```
+
+
+<!--Slide 6: Model Building Process-->
+# The Process {.bg-image5}
+1) Use three variable selection methods to create regression models
+
+:::{.smaller}
+  - Forward Selection
+  - Backward Elimination
+  - Stepwise Selection
+  
+:::
+
+2) Use cross validation
+
+3) Pick the best model!
+
+```{r}
+# Null and Full Model
+M0 = lm(ln_Price ~ 1, data = ln_data) # Null model
+M1 = lm(ln_Price ~., data = ln_data) # Full model
+
+```
+
+
+<!--Slide 8: Forward Selection-->
+# Model A: Forward Selection {.bg-image6}
+
+```{r}
+A = step(M0, direction = "forward", scope = list(lower = M0, upper = M1), trace = F)
+```
+Formula:
+
+:::{.smaller}
+\begin{equation*}
+\begin{split}
+ln(price) = & \beta_0+\beta_1\cdot\text{living_area}+\beta_2\cdot ln(\text{land_value})+ \beta_3\cdot bathrooms+ \\
+& \beta_4\cdot waterfront+ \beta_5\cdot\text{heat_type}+ \beta_6\cdot ln(\text{lot_size}) + \\
+& \beta_7\cdot\text{age}+\beta_8\cdot\text{new_construct}+\beta_9\cdot\text{central_air}+ \\
+& \beta_{10}\cdot\text{pct_college}+\beta_{11}\cdot\text{rooms}
+\end{split}
+\end{equation*}
+:::
+
+AIC of model A: 678.0835
+```{r, results='hide'}
+AIC(A)
+```
+
+
+<!--Slide 9: Backward Elimination-->
+# Model B: Backward Elimination {.bg-image7}
+
+```{r}
+B = step(M1, direction = "backward", trace = F)
+```
+
+Formula:
+
+:::{.smaller}
+\begin{equation*}
+\begin{split}
+ln(price)= & \beta_0 + \beta_1\cdot\text{waterfront} + \beta_2\cdot\text{age} + \beta_3\cdot\text{new_construct} + \\
+& \beta_4\cdot\text{central_air} + \beta_5\cdot\text{fuel_type} + \\
+& \beta_6\cdot\text{living_area} + \beta_7\cdot\text{pct_college} + \\
+& \beta_8\cdot\text{bathrooms} + \beta_9\cdot\text{rooms} + \\
+& \beta_{10}\cdot ln(\text{lot_size}) + \\
+& \beta_{11}\cdot ln(\text{land_value})
+\end{split}
+\end{equation*}
+:::
+
+AIC of model B: 676.1894
+```{r, results='hide'}
+AIC(B)
+```
+
+
+<!--Slide 10: Stepwise Selection-->
+# Model C: Stepwise Selection {.bg-image8 .right-aligned-slide}
+```{r}
+C = step(M1, direction = "both", trace = F)
+```
+
+:::{.left-aligned-text}
+Formula:
+:::
+
+:::{.smaller}
+\begin{equation*}
+\begin{split}
+ln(price)= & \beta_0 + \beta_1\cdot\text{waterfront} + \beta_2\cdot\text{age} + \beta_3\cdot\text{new_construct} + \\
+& \beta_4\cdot\text{central_air} + \beta_5\cdot\text{fuel_type} + \beta_6\cdot\text{living_area} + \\
+& \beta_7\cdot\text{pct_college} + \beta_8\cdot\text{bathrooms} + \beta_9\cdot\text{rooms} + \\
+& \beta_{10}\cdot ln(\text{lot_size}) + \beta_{11}\cdot ln(\text{land_value})
+\end{split}
+\end{equation*}
+:::
+
+AIC of model C: 676.1894
+```{r, results='hide'}
+AIC(C)
+```
+
+
+<!--Slide 11: Model Comparison-->
+# Model Comparison using Cross Validation {.bg-image9}
+K = 10
+
+```{r}
+# cross validation
+cv = trainControl(method = "cv", number = 10)
+
+cv_A = train(ln_Price ~ ., data = ln_data[, all.vars(formula(A))], method = "lm", trControl = cv)
+cv_B = train(ln_Price ~ ., data = ln_data[, all.vars(formula(B))], method = "lm", trControl = cv)
+cv_C = train(ln_Price ~ ., data = ln_data[, all.vars(formula(C))], method = "lm", trControl = cv)
+
+aic_list = c(AIC(A), AIC(B), AIC(C))
+bic_list = c(BIC(A), BIC(B), BIC(C))
+
+# results table
+results = data.frame(
+  Model = c("A", "B", "C"),
+  RMSE = c(cv_A$results$RMSE, cv_B$results$RMSE, cv_C$results$RMSE),
+  Rsquared = c(cv_A$results$Rsquared, cv_B$results$Rsquared, cv_C$results$Rsquared),
+  AIC = aic_list,
+  BIC = bic_list
+)
+
+```
+
+
+
+```{r}
+# knitr to make table nicer
+kable(results, digits = 4) %>%
+  kable_styling(full_width = FALSE, position = "center", bootstrap_options = c("striped", "hover"))
+
+```
+
+
+<!--Slide 12: Choose the Best one-->
+# Best Model: Model C {.bg-image10}
+
+:::{.smaller}
+\begin{equation*}
+\begin{split}
+ln(price)= & \beta_0 + \beta_1\cdot\text{waterfront} + \beta_2\cdot\text{age} + \beta_3\cdot\text{new_construct} + \\
+& \beta_4\cdot\text{central_air} + \beta_5\cdot\text{fuel_type} + \beta_6\cdot\text{living_area} + \\
+& \beta_7\cdot\text{pct_college} + \beta_8\cdot\text{bathrooms} + \beta_9\cdot\text{rooms} + \\
+& \beta_{10}\cdot ln(\text{lot_size}) + \beta_{11}\cdot ln(\text{land_value})
+\end{split}
+\end{equation*}
+:::
+
+<!--Slide 13: Residual vs Fitted-->
+# Residual vs Fitted {.bg-image11}
+
+::: {layout="[0.75, 0.01, 0.25]"}
+
+```{r}
+
+autoplot(C, which = 1, label.size = 2)
+
+```
+
+- Residuals scattered around 0
+- No discernable pattern
+:::
+
+
+
+
+
+
+
+
+<!--Slide 14: QQ Plot-->
+# Normal Q-Q Plot {.bg-image12}
+
+
+::: {layout="[0.75, 0.01, 0.25]"}
+
+```{r}
+autoplot(C, which = 2,  label.size = 2)
+```
+
+- Majority is normally distributed
+- Few outliers at high/low quantiles
+:::
+
+
+<!--Slide 15: Assumption Check-->
+# Assumption Check {.bg-image13}
+
+:::{.smaller}
+1. Linearity - Yes, mostly linear
+2. Normality of Residuals - Yes, mostly normal
+3. Homoskedasticity - Yes, fairly consistent
+4. Independence - Yes
+:::
+
+<!--Slide 16: Interpret Coefficients-->
+# Practical Interpretation {.bg-image5}
+:::{.smaller}
+- **waterfront**: +54% if waterfront
+- **age**: -0.1% per year
+- **new_construct**: -13% if new construct
+- **central_air**: +6% if central air
+- **fuel_type**: +9% Gas, +5% Oil, +0.8% Solar, -101% Wood, -43% Other, -28% None
+- **living_area**: +0.03%
+- **pct_college**: -0.2%
+- **bathrooms**: +11% per bathroom
+- **rooms**: +0.7% per room
+- **ln_Lot.Size**: +11%
+- **ln_Land.Value**: +12%
+:::
+
+<!--Slide 17: Limitations-->
+# Limitations {.bg-image14}
+- Spatial dependency
+- Possible omitted features
+
+
+<!--Slide 18: Future Improvements-->
+# Future Improvements {.bg-image15}
+- Interactions
+- Polynomial terms
+- LASSO
+- Machine Learning Models
+
+<!--Slide 19: Conclusion-->
+# Conclusion {.bg-image16}
+**Research Question:** What factors influence house prices in New York?
+
+:::{.smaller}
+- Location matters
+- House characteristics: more bathrooms, larger living area, central air
+- Older houses decreases price, but new construct also decreases price
+- Fuel type matters
+:::
+
+**Overall:** Price is influenced by a combination of location, house feature and neighborhood characteristics, with some factors having much larger effects than others.
+
+
+# Thank You!
+
+
+
+
+
+
+
