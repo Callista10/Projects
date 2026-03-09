@@ -1,0 +1,20 @@
+References Summary:
+- wav_files.txt:
+    use AI to explain wav files
+    includes asking how to open and write (fwrite and memcpy)
+    
+- cross_correlation.txt:
+    use AI to explain cross correlation formula
+    help understand formula for tr_identify
+
+- tr_insert.txt:
+    use AI to explain how tr_insert works (especially parent child relationship)
+    also asked the difference between memmove and memcpy
+    this also helped in understanding which one to use for delete_range
+    and if I should use any of them for tr_insert
+    other than that, I also asked about malloc condition if fail
+
+- test.txt:
+    use AI to explain what a test driver is and how it works
+    asked it to give me an example of what a test driver would look like
+    asked about assert()
