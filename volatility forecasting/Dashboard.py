@@ -1,0 +1,1698 @@
+from __future__ import annotations
+
+import io
+import json
+import base64
+import zlib
+import re
+import warnings
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import joblib
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
+warnings.filterwarnings("ignore")
+
+# =============================================================================
+# Core configuration
+# =============================================================================
+EPS = 1e-8
+APP_DIR = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
+SEARCH_DIRS = [Path.cwd(), APP_DIR, Path.cwd() / "app_artifacts", APP_DIR / "app_artifacts", Path.cwd() / "models", APP_DIR / "models", Path.cwd() / "dashboard_outputs", APP_DIR / "dashboard_outputs"]
+
+BASE_FEATURES = [
+    "wap_mean", "wap_last",
+    "spread_mean", "spread_max",
+    "log_return_sum", "log_return_std",
+    "realised_volatility",
+]
+SHORT_FEATURES = [
+    "rv_lag2", "rv_lag3",
+    "spread_lag2", "spread_lag3",
+    "logret_lag2",
+    "rv_delta",
+    "rv_rollmean3", "spread_rollmean3",
+]
+MEDIUM_FEATURES = [
+    "rv_lag5", "spread_lag5", "logret_lag5",
+    "rv_momentum5",
+    "rv_rollmean5", "rv_rollstd5", "spread_rollmean5",
+    "rv_ratio5", "rv_above_mean5",
+]
+LONG_ONLY_FEATURES = [
+    "rv_lag10", "spread_lag10",
+    "rv_momentum10",
+    "rv_rollmean10", "rv_rollstd10", "spread_rollmean10",
+    "rv_ratio10", "rv_above_mean10",
+]
+FEATURES_LONG = BASE_FEATURES + SHORT_FEATURES + MEDIUM_FEATURES + LONG_ONLY_FEATURES
+DEFAULT_FEATURES = FEATURES_LONG
+TARGET = "target_rv"
+
+# Embedded dashboard data fallbacks. These keep the presentation working even if
+# the CSV files are not placed beside the app after download. External CSVs with
+# the same names still take priority.
+_EMBEDDED_PER_STOCK_LONG_CSV = """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"""
+_EMBEDDED_TECH_PER_STOCK_CSV = """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"""
+
+def _read_embedded_csv(payload: str) -> pd.DataFrame:
+    return pd.read_csv(io.StringIO(zlib.decompress(base64.b64decode(payload)).decode("utf-8")))
+
+MODEL_COLOR_MAP = {
+    "XGB Long":   "#22d3ee",   # vivid cyan
+    "RF Long":    "#4ade80",   # vivid green
+    "LR Long":    "#fbbf24",   # vivid amber
+    "Lasso Long": "#c084fc",   # vivid violet
+    "MLP Long":   "#fb7185",   # vivid rose
+    "EWMA":       "#94a3b8",
+}
+
+def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+    """Convert a 6-digit hex colour to an rgba() string."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+CORE_LONG_MODELS = ["XGB Long", "RF Long", "LR Long", "Lasso Long", "MLP Long"]
+CORE_FAMILY_LABELS = {
+    "XGB Long": "XGBoost",
+    "RF Long": "Random Forest",
+    "LR Long": "Linear",
+    "Lasso Long": "Lasso",
+    "MLP Long": "MLP",
+}
+
+# Final notebook screenshots supplied by the team. These are used when CSV outputs are
+# not supplied beside the app. Values are deliberately kept visible in code so the
+# dashboard remains self-contained for presentation.
+LONG_RESULTS = pd.DataFrame([
+    {"Model": "LR Long",    "Family": "LR",     "Group": "Core", "Seen RMSE": 0.000558, "Seen RMSPE": 10.747754, "Seen QLIKE": 0.181288, "Unseen RMSE": 0.000449, "Unseen RMSPE": 6.949975, "Unseen QLIKE": 0.166587, "Δ QLIKE": -0.014701},
+    {"Model": "Lasso Long", "Family": "Lasso",  "Group": "Core", "Seen RMSE": 0.000559, "Seen RMSPE": 10.827867, "Seen QLIKE": 0.183051, "Unseen RMSE": 0.000452, "Unseen RMSPE": 6.988421, "Unseen QLIKE": 0.168076, "Δ QLIKE": -0.014975},
+    {"Model": "XGB Long",   "Family": "XGB",    "Group": "Core", "Seen RMSE": 0.000556, "Seen RMSPE": 11.066286, "Seen QLIKE": 0.178809, "Unseen RMSE": 0.000449, "Unseen RMSPE": 6.963247, "Unseen QLIKE": 0.164882, "Δ QLIKE": -0.013927},
+    {"Model": "RF Long",    "Family": "RF",     "Group": "Core", "Seen RMSE": 0.000557, "Seen RMSPE": 11.096493, "Seen QLIKE": 0.179766, "Unseen RMSE": 0.000451, "Unseen RMSPE": 7.040959, "Unseen QLIKE": 0.165905, "Δ QLIKE": -0.013861},
+    {"Model": "MLP Long",   "Family": "MLP",    "Group": "Core", "Seen RMSE": 0.000563, "Seen RMSPE": 11.387315, "Seen QLIKE": 0.182752, "Unseen RMSE": 0.000456, "Unseen RMSPE": 7.203872, "Unseen QLIKE": 0.168723, "Δ QLIKE": -0.014029},
+])
+# Classical benchmark value supplied from the modelling notebook. EWMA is a
+# rule-based volatility benchmark used as a simple reference point.
+BENCHMARK_RESULTS = {
+    "Seen test": {
+        "EWMA": {"RMSE": 0.000757, "RMSPE": 14.326191, "QLIKE": 0.270585},
+    }
+}
+LONG_MODEL_ORDER = CORE_LONG_MODELS
+WEIGHTED_LONG_MODEL_ORDER = []
+TECH_LONG_MODEL_ORDER = CORE_LONG_MODELS
+# Keep the live presentation focused on the five main candidate families.
+LONG_RESULTS = LONG_RESULTS[LONG_RESULTS["Model"].isin(CORE_LONG_MODELS)].copy()
+
+# =============================================================================
+# Styling
+# =============================================================================
+st.set_page_config(
+    page_title="Volatility Signal Desk",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+st.markdown(
+    """
+    <style>
+    :root {
+      --bg0: #070b13;
+      --bg1: #0f172a;
+      --card: rgba(15, 23, 42, 0.78);
+      --card2: rgba(17, 24, 39, 0.84);
+      --border: rgba(148, 163, 184, 0.20);
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --blue: #38bdf8;
+      --green: #22c55e;
+      --amber: #f59e0b;
+      --red: #ef4444;
+    }
+    .stApp {
+      background:
+        radial-gradient(circle at 8% 0%, rgba(56,189,248,0.18), transparent 28%),
+        radial-gradient(circle at 92% 8%, rgba(34,197,94,0.12), transparent 25%),
+        linear-gradient(180deg, #070b13 0%, #0b1120 50%, #111827 100%);
+      color: var(--text);
+    }
+    .block-container {padding-top: 1.05rem; max-width: 1500px;}
+    section[data-testid="stSidebar"] {display: none;}
+    .hero {
+      border: 1px solid var(--border);
+      background:
+        linear-gradient(135deg, rgba(15,23,42,.96), rgba(30,58,138,.54)),
+        radial-gradient(circle at 88% 0%, rgba(56,189,248,.28), transparent 34%);
+      border-radius: 30px;
+      padding: 1.35rem 1.55rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 24px 60px rgba(0,0,0,.35);
+    }
+    .hero h1 {font-size: 2.15rem; line-height: 1.05; letter-spacing: -0.04em; margin: 0 0 .35rem 0; color: #f8fafc;}
+    .hero p {margin: 0; color: #cbd5e1; font-size: 1rem; max-width: 980px;}
+    .card {
+      border: 1px solid var(--border);
+      background: var(--card);
+      border-radius: 22px;
+      padding: 1rem 1.1rem;
+      height: 100%;
+      box-shadow: 0 16px 40px rgba(0,0,0,.20);
+    }
+    .card h3 {margin: 0 0 .35rem 0; color: #f8fafc; font-size: 1.05rem;}
+    .card p {color: #cbd5e1; margin: 0; font-size: .93rem;}
+    .kpi-label {color: #94a3b8; font-size: .74rem; text-transform: uppercase; letter-spacing: .09em; font-weight: 750;}
+    .kpi-value {color: #f8fafc; font-size: 1.55rem; font-weight: 850; margin-top: .20rem; letter-spacing: -0.03em;}
+    .kpi-help {color: #aab8cc; font-size: .84rem; margin-top: .18rem;}
+    .pill {
+      display: inline-block;
+      padding: .25rem .58rem;
+      border-radius: 999px;
+      background: rgba(56,189,248,.12);
+      color: #7dd3fc;
+      border: 1px solid rgba(125,211,252,.24);
+      font-size: .75rem;
+      font-weight: 800;
+      margin-right: .35rem;
+    }
+    .status-good {border: 1px solid rgba(34,197,94,.26); background: rgba(20,83,45,.20); color: #dcfce7; border-radius: 16px; padding: .78rem .92rem;}
+    .status-warn {border: 1px solid rgba(245,158,11,.30); background: rgba(120,53,15,.20); color: #ffedd5; border-radius: 16px; padding: .78rem .92rem;}
+    .status-info {border: 1px solid rgba(96,165,250,.28); background: rgba(30,64,175,.18); color: #dbeafe; border-radius: 16px; padding: .78rem .92rem;}
+    div[data-testid="stMetric"] {
+      background: rgba(15,23,42,.72);
+      border: 1px solid var(--border);
+      padding: .78rem .88rem;
+      border-radius: 18px;
+      box-shadow: 0 10px 26px rgba(0,0,0,.18);
+    }
+    div[data-testid="stMetricValue"] {color: #f8fafc; font-weight: 850;}
+    div[data-testid="stMetricLabel"] {color: #cbd5e1;}
+    div[data-testid="stTabs"] button {color: #cbd5e1; font-weight: 800;}
+    div[data-testid="stDataFrame"] {border-radius: 16px; overflow: hidden;}
+    .small-muted {color:#94a3b8; font-size: .86rem;}
+
+    .model-chip {
+      border: 1px solid rgba(148,163,184,.22);
+      background: linear-gradient(135deg, rgba(15,23,42,.86), rgba(30,41,59,.72));
+      border-radius: 20px;
+      padding: .9rem 1rem;
+      height: 100%;
+      box-shadow: 0 14px 34px rgba(0,0,0,.18);
+    }
+    .model-chip .name {font-weight: 850; color:#f8fafc; font-size: 1.02rem; margin-bottom:.25rem;}
+    .model-chip .tag {display:inline-block; padding:.18rem .5rem; border-radius:999px; font-size:.72rem; font-weight:800; color:#dbeafe; background:rgba(59,130,246,.18); border:1px solid rgba(147,197,253,.22); margin-top:.45rem;}
+    .stage-card {
+      border: 1px solid rgba(125,211,252,.18);
+      background: radial-gradient(circle at 0% 0%, rgba(56,189,248,.12), transparent 34%), rgba(15,23,42,.74);
+      border-radius: 22px;
+      padding: 1rem 1.1rem;
+      min-height: 150px;
+    }
+    .stage-card h3 {margin:.1rem 0 .35rem 0; color:#f8fafc; font-size:1.12rem;}
+    .stage-card p {margin:0; color:#cbd5e1; line-height:1.55;}
+    .accent-line {height:3px; width:72px; border-radius:999px; background:linear-gradient(90deg,#38bdf8,#22c55e,#f59e0b); margin:.4rem 0 .8rem 0;}
+
+    .insight-card {
+      border: 1px solid rgba(96,165,250,.20);
+      background: linear-gradient(180deg, rgba(15,23,42,.88), rgba(15,23,42,.76));
+      border-radius: 20px;
+      padding: .95rem 1rem;
+      min-height: 120px;
+      box-shadow: 0 10px 24px rgba(0,0,0,.16);
+      position: relative;
+      overflow: hidden;
+    }
+    .insight-card:before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 3px;
+      background: linear-gradient(90deg, rgba(56,189,248,.9), rgba(34,197,94,.8));
+    }
+    .insight-card h3 {margin:0 0 .35rem 0; color:#f8fafc; font-size:.98rem; letter-spacing:.01em;}
+    .insight-card p {margin:.18rem 0; color:#cbd5e1; line-height:1.42; font-size:.9rem;}
+    .bucket-card {
+      border: 1px solid rgba(148,163,184,.18);
+      background: linear-gradient(180deg, rgba(15,23,42,.84), rgba(15,23,42,.72));
+      border-radius: 16px;
+      padding: .78rem .88rem;
+      height: 100%;
+      box-shadow: 0 8px 18px rgba(0,0,0,.14);
+      position: relative;
+      overflow: hidden;
+    }
+    .bucket-card:before {
+      content:'';
+      position:absolute;
+      left:0;
+      top:0;
+      width:100%;
+      height:3px;
+      background:linear-gradient(90deg, rgba(56,189,248,.9), rgba(34,197,94,.85));
+    }
+    .bucket-card .bucket-title {font-weight:850; color:#f8fafc; font-size:.97rem; margin:.08rem 0 .42rem 0;}
+    .bucket-card .bucket-read {font-size:.84rem; color:#cbd5e1; margin:.12rem 0; line-height:1.36;}
+    .bucket-card .bucket-tag {display:inline-block; margin-top:.5rem; padding:.18rem .48rem; border-radius:999px; font-size:.7rem; font-weight:850; color:#dcfce7; background:rgba(34,197,94,.12); border:1px solid rgba(134,239,172,.20); letter-spacing:.01em;}
+    .limit-card, .future-card {
+      border: 1px solid rgba(148,163,184,.20);
+      border-radius: 22px;
+      padding: 1.05rem 1.12rem;
+      min-height: 145px;
+      box-shadow: 0 14px 34px rgba(0,0,0,.18);
+      position: relative;
+      overflow: hidden;
+    }
+    .limit-card {background: linear-gradient(180deg, rgba(15,23,42,.86), rgba(30,41,59,.68));}
+    .future-card {background: radial-gradient(circle at 0% 0%, rgba(34,197,94,.13), transparent 34%), rgba(15,23,42,.78);}
+    .limit-card:before, .future-card:before {
+      content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 3px;
+      background: linear-gradient(90deg, rgba(56,189,248,.95), rgba(34,197,94,.85), rgba(245,158,11,.78));
+    }
+    .limit-card h3, .future-card h3 {margin:.08rem 0 .42rem 0; color:#f8fafc; font-size:1.02rem;}
+    .limit-card p, .future-card p {margin:0; color:#cbd5e1; font-size:.92rem; line-height:1.48;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# =============================================================================
+# Data structures
+# =============================================================================
+@dataclass
+class PredictionResult:
+    mode: str
+    rows_in: int
+    rows_scored: int
+    warnings: list[str]
+    feature_df: pd.DataFrame
+    pred_df: pd.DataFrame
+
+# =============================================================================
+# Utilities and metrics
+# =============================================================================
+def first_existing(names: list[str]) -> Path | None:
+    for d in SEARCH_DIRS:
+        for name in names:
+            p = d / name
+            if p.exists():
+                return p
+    return None
+
+@st.cache_resource(show_spinner=False)
+def load_model_any(names: tuple[str, ...]):
+    path = first_existing(list(names))
+    if path is None:
+        return None
+    return joblib.load(path)
+
+@st.cache_data(show_spinner=False)
+def read_uploaded_csv(file_bytes: bytes) -> pd.DataFrame:
+    return pd.read_csv(io.BytesIO(file_bytes))
+
+def fmt(x: Any, d: int = 6) -> str:
+    try:
+        x = float(x)
+        if not np.isfinite(x):
+            return "—"
+        return f"{x:.{d}f}"
+    except Exception:
+        return "—"
+
+def _clean(y_true, y_pred):
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    m = np.isfinite(y_true) & np.isfinite(y_pred)
+    return np.maximum(y_true[m], EPS), np.maximum(y_pred[m], EPS)
+
+def rmse(y_true, y_pred) -> float:
+    y_true, y_pred = _clean(y_true, y_pred)
+    if len(y_true) == 0:
+        return float("nan")
+    return float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
+
+def rmspe(y_true, y_pred) -> float:
+    y_true, y_pred = _clean(y_true, y_pred)
+    if len(y_true) == 0:
+        return float("nan")
+    return float(np.sqrt(np.mean(((y_true - y_pred) / y_true) ** 2)))
+
+def qlike(y_true, y_pred) -> float:
+    y_true, y_pred = _clean(y_true, y_pred)
+    if len(y_true) == 0:
+        return float("nan")
+    ratio = y_true / y_pred
+    return float(np.mean(ratio - np.log(ratio) - 1))
+
+
+@st.cache_data(show_spinner=False)
+def read_optional_csv_any(names: tuple[str, ...]) -> pd.DataFrame | None:
+    """Read a dashboard CSV from the app folder, models folder, app_artifacts, or dashboard_outputs."""
+    path = first_existing(list(names))
+    if path is None:
+        return None
+    return pd.read_csv(path)
+
+
+def load_per_stock_long_results() -> pd.DataFrame:
+    """Load per-stock long-model results used for the real box plots."""
+    df = read_optional_csv_any((
+        "per_stock_long_results.csv",
+        "dashboard_outputs/per_stock_long_results.csv",
+        "seen_per_stock_long_results.csv",
+    ))
+    if df is None:
+        try:
+            df = _read_embedded_csv(_EMBEDDED_PER_STOCK_LONG_CSV)
+        except Exception:
+            return pd.DataFrame()
+
+    required = {"Split", "Model Group", "Model", "stock_id", "RMSE", "RMSPE", "QLIKE"}
+    if not required.issubset(df.columns):
+        return pd.DataFrame()
+
+    out = df.copy()
+    for col in ["RMSE", "RMSPE", "QLIKE", "n_rows"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    out = out[out["Model"].isin(CORE_LONG_MODELS)].copy()
+    out["Model Group"] = out["Model Group"].replace({
+        "Normal Long": "Normal long models",
+        "Standard": "Normal long models",
+    })
+    out["Split"] = out["Split"].replace({
+        "Seen": "Seen test",
+        "Unseen": "Unseen anonymous",
+    })
+    return out
+
+
+PER_STOCK_LONG_RESULTS = load_per_stock_long_results()
+PER_STOCK_LONG_SUMMARY = read_optional_csv_any((
+    "per_stock_long_summary.csv",
+    "dashboard_outputs/per_stock_long_summary.csv",
+))
+
+
+def load_tech_per_stock_results() -> pd.DataFrame:
+    """Load per-tech-stock model results from Notebook 3."""
+    df = read_optional_csv_any((
+        "tech_per_stock_all_models.csv",
+        "dashboard_outputs/tech_per_stock_all_models.csv",
+        "models/tech_per_stock_all_models.csv",
+    ))
+    if df is None:
+        try:
+            df = _read_embedded_csv(_EMBEDDED_TECH_PER_STOCK_CSV)
+        except Exception:
+            return pd.DataFrame()
+
+    rename = {
+        "model": "Model",
+        "stock": "stock_id",
+        "rmse": "RMSE",
+        "rmspe": "RMSPE",
+        "qlike": "QLIKE",
+    }
+    out = df.rename(columns=rename).copy()
+    required = {"stock_id", "Model", "RMSE", "RMSPE", "QLIKE"}
+    if not required.issubset(out.columns):
+        return pd.DataFrame()
+
+    for col in ["RMSE", "RMSPE", "QLIKE", "n_rows"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    out = out[out["Model"].isin(CORE_LONG_MODELS)].copy()
+    out["Dataset"] = "Named tech stocks"
+    out["Model Type"] = "Core long"
+    return out
+
+
+TECH_PER_STOCK_RESULTS = load_tech_per_stock_results()
+
+
+def compact_metric_card(title: str, value: str, help_text: str = "") -> None:
+    st.markdown(
+        f"""
+        <div class="card">
+          <div class="kpi-label">{title}</div>
+          <div class="kpi-value">{value}</div>
+          <div class="kpi-help">{help_text}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# =============================================================================
+# Upload preprocessing: mirrors Notebook 1 + Notebook 2 feature engineering
+# =============================================================================
+SYNONYMS = {
+    "time_id": ["time_id", "timeid", "session", "session_id", "auction_id", "window_id", "period_id"],
+    "seconds_in_bucket": ["seconds_in_bucket", "second", "seconds", "sec", "elapsed_seconds", "time_seconds", "timestamp", "time", "t"],
+    "stock_id": ["stock_id", "stockid", "asset_id", "symbol_id", "ticker_id", "instrument_id", "symbol", "ticker"],
+    "bid_price1": ["bid_price1", "bid_price_1", "bid1_price", "bid_px1", "best_bid", "bid", "bid_price", "bidprice"],
+    "ask_price1": ["ask_price1", "ask_price_1", "ask1_price", "ask_px1", "best_ask", "ask", "ask_price", "askprice", "offer", "offer_price"],
+    "bid_price2": ["bid_price2", "bid_price_2", "bid2_price", "bid_px2", "second_bid"],
+    "ask_price2": ["ask_price2", "ask_price_2", "ask2_price", "ask_px2", "second_ask", "second_offer"],
+    "bid_size1": ["bid_size1", "bid_size_1", "bid1_size", "bid_qty1", "bid_volume1", "best_bid_size", "bid_size", "bid_depth", "biddepth"],
+    "ask_size1": ["ask_size1", "ask_size_1", "ask1_size", "ask_qty1", "ask_volume1", "best_ask_size", "ask_size", "ask_depth", "askdepth", "offer_size", "offer_depth"],
+    "bid_size2": ["bid_size2", "bid_size_2", "bid2_size", "bid_qty2", "bid_volume2"],
+    "ask_size2": ["ask_size2", "ask_size_2", "ask2_size", "ask_qty2", "ask_volume2", "offer_size2"],
+}
+REQUIRED_CONCEPTS = ["bid_price1", "ask_price1", "bid_size1", "ask_size1"]
+OPTIONAL_CONCEPTS = ["bid_price2", "ask_price2", "bid_size2", "ask_size2"]
+
+def norm(x: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(x).strip().lower()).strip("_")
+
+def auto_map_columns(cols: list[str]) -> dict[str, str]:
+    lookup = {norm(c): c for c in cols}
+    mapping: dict[str, str] = {}
+    for canonical, aliases in SYNONYMS.items():
+        for alias in aliases:
+            if norm(alias) in lookup:
+                mapping[canonical] = lookup[norm(alias)]
+                break
+    for canonical in SYNONYMS:
+        if canonical in mapping:
+            continue
+        token = canonical.replace("_", "")
+        for c in cols:
+            compact = norm(c).replace("_", "")
+            if token == compact or token in compact:
+                mapping[canonical] = c
+                break
+    return mapping
+
+def realised_volatility(log_returns) -> float:
+    arr = np.asarray(log_returns, dtype=float)
+    return float(np.sqrt(np.nansum(arr ** 2)))
+
+def canonicalise_order_book(df: pd.DataFrame, mapping: dict[str, str]) -> tuple[pd.DataFrame, list[str]]:
+    missing = [c for c in REQUIRED_CONCEPTS if c not in mapping]
+    if missing:
+        raise ValueError("The upload is missing essential top-of-book fields: " + ", ".join(missing))
+    warnings_list: list[str] = []
+    out = pd.DataFrame()
+    for canonical, source in mapping.items():
+        if source in df.columns:
+            out[canonical] = df[source]
+    if "stock_id" not in out.columns:
+        out["stock_id"] = "uploaded_stock"
+    if "time_id" not in out.columns:
+        out["time_id"] = "uploaded_session"
+    if "seconds_in_bucket" not in out.columns:
+        out["seconds_in_bucket"] = out.groupby(["stock_id", "time_id"]).cumcount()
+        warnings_list.append("Elapsed time was inferred from row order.")
+    else:
+        out["seconds_in_bucket"] = pd.to_numeric(out["seconds_in_bucket"], errors="coerce")
+    for c in REQUIRED_CONCEPTS + OPTIONAL_CONCEPTS:
+        if c in out.columns:
+            out[c] = pd.to_numeric(out[c], errors="coerce")
+    for c1, c2 in [("bid_price1", "bid_price2"), ("ask_price1", "ask_price2"), ("bid_size1", "bid_size2"), ("ask_size1", "ask_size2")]:
+        if c2 not in out.columns:
+            out[c2] = out[c1]
+    out["stock_id"] = out["stock_id"].astype(str)
+    out["time_id"] = out["time_id"].astype(str)
+    out["seconds_in_bucket"] = pd.to_numeric(out["seconds_in_bucket"], errors="coerce").fillna(0).clip(lower=0).astype(int)
+    out = out.sort_values(["stock_id", "time_id", "seconds_in_bucket"]).reset_index(drop=True)
+    return out, warnings_list
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def preprocess_uploaded_orderbook(file_bytes: bytes) -> pd.DataFrame:
+    raw = pd.read_csv(io.BytesIO(file_bytes))
+    mapping = auto_map_columns(list(raw.columns))
+    canon, _ = canonicalise_order_book(raw, mapping)
+    return build_bucket_features(canon, bucket_size=30)
+
+def build_bucket_features(raw: pd.DataFrame, bucket_size: int = 30) -> pd.DataFrame:
+    book_cols = ["bid_price1", "ask_price1", "bid_price2", "ask_price2", "bid_size1", "ask_size1", "bid_size2", "ask_size2"]
+    parts = []
+    for (sid, tid), g in raw.groupby(["stock_id", "time_id"], sort=False):
+        max_second = int(np.nanmax(g["seconds_in_bucket"])) if len(g) else 0
+        # Notebook 1 reconstructs a complete second-by-second grid. For Optiver train
+        # sessions this is 0-599. For longer tech-stock sessions it naturally extends to
+        # the next complete 30-second bucket.
+        session_end = max(599, int(np.ceil((max_second + 1) / bucket_size) * bucket_size - 1))
+        grid = pd.DataFrame({"seconds_in_bucket": np.arange(0, session_end + 1, dtype=int)})
+        gg = grid.merge(g, on="seconds_in_bucket", how="left")
+        gg["stock_id"] = sid
+        gg["time_id"] = tid
+        gg[book_cols] = gg[book_cols].ffill()
+        parts.append(gg)
+    if not parts:
+        raise ValueError("No rows were available after reading the upload.")
+    df = pd.concat(parts, ignore_index=True)
+    df = df.dropna(subset=book_cols).copy()
+    df = df[(df["bid_price1"] > 0) & (df["ask_price1"] > 0) & ((df["bid_size1"] + df["ask_size1"]) > 0)].copy()
+    if df.empty:
+        raise ValueError("No valid order-book rows were found after cleaning.")
+
+    df["wap_raw"] = ((df["bid_price1"] * df["ask_size1"] + df["ask_price1"] * df["bid_size1"]) / (df["bid_size1"] + df["ask_size1"] + EPS))
+    df["bid_ask_spread"] = df["ask_price1"] / (df["bid_price1"] + EPS) - 1
+
+    # The anonymous Optiver training data is centred around WAP ≈ 1. When a user
+    # uploads raw dollar-price data, normalise WAP inside each stock-session so the
+    # uploaded feature representation matches the training representation. Already
+    # normalised files are left unchanged.
+    session_first_wap = df.groupby(["stock_id", "time_id"], sort=False)["wap_raw"].transform("first")
+    session_median_wap = df.groupby(["stock_id", "time_id"], sort=False)["wap_raw"].transform("median")
+    df["wap"] = np.where(session_median_wap > 5, df["wap_raw"] / (session_first_wap + EPS), df["wap_raw"])
+
+    df["log_return"] = df.groupby(["stock_id", "time_id"], sort=False)["wap"].transform(lambda x: np.log(x).diff().fillna(0))
+    df["bucket"] = (df["seconds_in_bucket"] // bucket_size).astype(int) + 1
+
+    agg = df.groupby(["stock_id", "time_id", "bucket"], as_index=False).agg(
+        wap_last=("wap", "last"),
+        wap_mean=("wap", "mean"),
+        spread_mean=("bid_ask_spread", "mean"),
+        spread_max=("bid_ask_spread", "max"),
+        log_return_sum=("log_return", "sum"),
+        log_return_std=("log_return", "std"),
+        n_obs=("wap", "count"),
+    )
+    rv = df.groupby(["stock_id", "time_id", "bucket"])["log_return"].apply(realised_volatility).reset_index(name="realised_volatility")
+    out = agg.merge(rv, on=["stock_id", "time_id", "bucket"], how="left").sort_values(["stock_id", "time_id", "bucket"]).reset_index(drop=True)
+    out["target_rv"] = out.groupby(["stock_id", "time_id"], sort=False)["realised_volatility"].shift(-1)
+    return out.replace([np.inf, -np.inf], np.nan)
+
+def add_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy().sort_values(["stock_id", "time_id", "bucket"]).reset_index(drop=True)
+    df["_gid"] = df.groupby(["stock_id", "time_id"], sort=False).ngroup()
+    grp = df.groupby("_gid", sort=False)
+
+    df["rv_lag2"] = grp["realised_volatility"].shift(1)
+    df["rv_lag3"] = grp["realised_volatility"].shift(2)
+    df["spread_lag2"] = grp["spread_mean"].shift(1)
+    df["spread_lag3"] = grp["spread_mean"].shift(2)
+    df["logret_lag2"] = grp["log_return_sum"].shift(1)
+    df["rv_delta"] = grp["realised_volatility"].diff()
+    df["rv_rollmean3"] = grp["realised_volatility"].transform(lambda x: x.rolling(3, min_periods=2).mean())
+    df["spread_rollmean3"] = grp["spread_mean"].transform(lambda x: x.rolling(3, min_periods=2).mean())
+
+    df["rv_lag5"] = grp["realised_volatility"].shift(4)
+    df["spread_lag5"] = grp["spread_mean"].shift(4)
+    df["logret_lag5"] = grp["log_return_sum"].shift(4)
+    df["rv_momentum5"] = df["realised_volatility"] - df["rv_lag5"]
+    df["rv_rollmean5"] = grp["realised_volatility"].transform(lambda x: x.rolling(5, min_periods=3).mean())
+    df["rv_rollstd5"] = grp["realised_volatility"].transform(lambda x: x.rolling(5, min_periods=3).std())
+    df["spread_rollmean5"] = grp["spread_mean"].transform(lambda x: x.rolling(5, min_periods=3).mean())
+    df["rv_ratio5"] = df["realised_volatility"] / (df["rv_rollmean5"] + EPS)
+    df["rv_above_mean5"] = (df["realised_volatility"] > df["rv_rollmean5"]).astype(int)
+
+    df["rv_lag10"] = grp["realised_volatility"].shift(9)
+    df["spread_lag10"] = grp["spread_mean"].shift(9)
+    df["rv_momentum10"] = df["realised_volatility"] - df["rv_lag10"]
+    df["rv_rollmean10"] = grp["realised_volatility"].transform(lambda x: x.rolling(10, min_periods=6).mean())
+    df["rv_rollstd10"] = grp["realised_volatility"].transform(lambda x: x.rolling(10, min_periods=6).std())
+    df["spread_rollmean10"] = grp["spread_mean"].transform(lambda x: x.rolling(10, min_periods=6).mean())
+    df["rv_ratio10"] = df["realised_volatility"] / (df["rv_rollmean10"] + EPS)
+    df["rv_above_mean10"] = (df["realised_volatility"] > df["rv_rollmean10"]).astype(int)
+
+    return df.drop(columns=["_gid"]).replace([np.inf, -np.inf], np.nan)
+
+def select_forecast_window(df: pd.DataFrame, feature_names: list[str]) -> tuple[pd.DataFrame, list[str]]:
+    clean = df.dropna(subset=feature_names).copy()
+    if clean.empty:
+        raise ValueError("The upload contains no complete rows for the XGB Long feature set.")
+    notes: list[str] = []
+    if "bucket" in clean.columns:
+        clean["bucket"] = pd.to_numeric(clean["bucket"], errors="coerce")
+        window = clean[clean["bucket"].isin([16, 17, 18, 19])].copy()
+        if window.empty:
+            available = clean["bucket"].dropna().astype(int).sort_values().unique().tolist()
+            raise ValueError(
+                "No bucket 16, 17, 18 or 19 rows were found. The forecast overlay needs row 16 to forecast 17, "
+                "row 17 to forecast 18, row 18 to forecast 19, and row 19 to forecast 20. "
+                f"Available buckets: {available[:12]}{'...' if len(available) > 12 else ''}"
+            )
+        clean = window.sort_values([c for c in ["stock_id", "time_id", "bucket"] if c in window.columns])
+        clean["forecast_bucket"] = clean["bucket"].astype(int) + 1
+    else:
+        clean = clean.tail(4).copy()
+        clean["forecast_bucket"] = np.arange(17, 17 + len(clean))
+        notes.append("No bucket column was found, so the final four complete rows are treated as the forecast window.")
+    return clean, notes
+
+def predict_from_features_replay(df: pd.DataFrame, model, feature_names: list[str]) -> PredictionResult:
+    features_df = add_temporal_features(df) if not set(feature_names).issubset(df.columns) and set(BASE_FEATURES).issubset(df.columns) else df.copy()
+    clean, notes = select_forecast_window(features_df, feature_names)
+    pred = np.maximum(model.predict(clean[feature_names].values), EPS)
+    out = clean.copy()
+    out["predicted_next_rv"] = pred
+    if "target_rv" in out.columns and "forecast_bucket" in out.columns:
+        out.loc[pd.to_numeric(out["forecast_bucket"], errors="coerce").eq(20), "target_rv"] = np.nan
+    if "target_rv" in out.columns:
+        out["absolute_error"] = (out["target_rv"] - out["predicted_next_rv"]).abs()
+        out["percentage_error"] = out["absolute_error"] / out["target_rv"].replace(0, np.nan)
+    return PredictionResult("feature_table", len(df), len(out), notes, features_df, out)
+
+def predict_from_raw_orderbook_replay(file_bytes: bytes, model, feature_names: list[str]) -> PredictionResult:
+    buckets = preprocess_uploaded_orderbook(file_bytes)
+    feats = add_temporal_features(buckets)
+    clean, notes = select_forecast_window(feats, feature_names)
+    pred = np.maximum(model.predict(clean[feature_names].values), EPS)
+    keep_cols = [c for c in ["stock_id", "time_id", "bucket", "forecast_bucket", "realised_volatility", "target_rv", "wap_mean", "spread_mean", "n_obs"] if c in clean.columns]
+    out = clean[keep_cols].copy()
+    out["predicted_next_rv"] = pred
+    if "target_rv" in out.columns and "forecast_bucket" in out.columns:
+        out.loc[pd.to_numeric(out["forecast_bucket"], errors="coerce").eq(20), "target_rv"] = np.nan
+    if "target_rv" in out.columns:
+        out["absolute_error"] = (out["target_rv"] - out["predicted_next_rv"]).abs()
+        out["percentage_error"] = out["absolute_error"] / out["target_rv"].replace(0, np.nan)
+    return PredictionResult("raw_order_book", len(buckets), len(out), notes, buckets, out)
+
+# =============================================================================
+# Visualisations
+# =============================================================================
+def metric_column(metric: str, split: str) -> str:
+    return f"{split} {metric}"
+
+def long_metric_longform(metric: str) -> pd.DataFrame:
+    rows = []
+    for _, r in LONG_RESULTS.iterrows():
+        for split in ["Seen", "Unseen"]:
+            val = r.get(metric_column(metric, split))
+            if pd.notna(val):
+                rows.append({"Model": r["Model"], "Family": r["Family"], "Group": r["Group"], "Split": "Seen test" if split == "Seen" else "Unseen anonymous", "Value": float(val)})
+    return pd.DataFrame(rows)
+
+def plot_long_metric_bars(metric: str = "QLIKE") -> go.Figure:
+    d = long_metric_longform(metric)
+    d["Model"] = pd.Categorical(d["Model"], categories=LONG_RESULTS["Model"].tolist(), ordered=True)
+    d = d.sort_values(["Model", "Split"])
+    fig = px.bar(d, x="Model", y="Value", color="Split", barmode="group", text="Value", title=f"Long-horizon model comparison by {metric}")
+    fig.update_traces(texttemplate="%{text:.4g}", textposition="outside", cliponaxis=False)
+    ymax = float(d["Value"].max()) if len(d) else 1
+    fig.update_yaxes(range=[0, ymax * 1.18 if ymax > 0 else 1], title=metric)
+    fig.update_layout(template="plotly_dark", height=430, margin=dict(l=20, r=20, t=60, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(15,23,42,.55)", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    return fig
+
+def apply_metric_axis_format(fig: go.Figure, metric: str, log_scale: bool = False) -> go.Figure:
+    """Keep metric axes readable across tiny RMSE values and larger QLIKE/RMSPE values."""
+    metric = metric.upper()
+    if metric == "RMSE":
+        tickformat = ".1e"
+    elif metric == "RMSPE":
+        tickformat = ".2f"
+    else:
+        tickformat = ".3f" if not log_scale else ".2g"
+    fig.update_yaxes(tickformat=tickformat)
+    if log_scale:
+        fig.update_yaxes(type="log")
+        if metric == "RMSPE":
+            fig.update_yaxes(
+                tickvals=[0.5, 1, 2, 5, 10, 20, 40],
+                ticktext=["0.5", "1", "2", "5", "10", "20", "40"],
+            )
+    return fig
+
+
+def should_use_log_axis(values: pd.Series) -> bool:
+    vals = pd.to_numeric(values, errors="coerce")
+    vals = vals[np.isfinite(vals) & (vals > 0)]
+    if len(vals) < 2:
+        return False
+    return bool(vals.max() / max(vals.min(), EPS) > 80)
+
+
+def plot_per_stock_long_box(model_group: str, metric: str, split_filter: str | None = "Seen test") -> go.Figure:
+    """Per-stock metric distribution for the five core long models.
+
+    Drawn on numeric x-positions so every box is thick and exactly centred
+    under its model-family label.
+    """
+    if PER_STOCK_LONG_RESULTS.empty:
+        d = long_metric_longform(metric)
+        d = d[d["Model"].isin(CORE_LONG_MODELS)].copy().rename(columns={"Value": metric})
+    else:
+        d = PER_STOCK_LONG_RESULTS[PER_STOCK_LONG_RESULTS["Model"].isin(CORE_LONG_MODELS)].copy()
+        if "Model Group" in d.columns:
+            d = d[d["Model Group"].astype(str).eq("Normal long models")].copy()
+
+    if split_filter and "Split" in d.columns:
+        d = d[d["Split"].astype(str).eq(split_filter)].copy()
+
+    if metric not in d.columns:
+        metric = "QLIKE"
+    d[metric] = pd.to_numeric(d[metric], errors="coerce")
+    d = d.dropna(subset=[metric])
+
+    model_order = [m for m in CORE_LONG_MODELS if m in set(d["Model"].astype(str))]
+    family_order = [CORE_FAMILY_LABELS.get(m, m) for m in model_order]
+    x_lookup = {m: i for i, m in enumerate(model_order)}
+
+    fig = go.Figure()
+    for model in model_order:
+        vals = d.loc[d["Model"].astype(str).eq(model), metric].dropna()
+        if vals.empty:
+            continue
+        family = CORE_FAMILY_LABELS.get(model, model)
+        colour = MODEL_COLOR_MAP.get(model, "#38bdf8")
+        x0 = x_lookup[model]
+        fig.add_trace(go.Box(
+            x=[x0] * len(vals),
+            y=vals,
+            name=family,
+            boxpoints=False,
+            boxmean=True,
+            width=0.52,
+            marker_color=colour,
+            fillcolor=_hex_to_rgba(colour, 0.18),
+            line=dict(color=colour, width=2.2),
+            whiskerwidth=0.55,
+            showlegend=False,
+            hovertemplate=(
+                "Model family=" + family + "<br>" + metric + "=%{y:.6g}<extra></extra>"
+            ),
+        ))
+
+    title_split = split_filter if split_filter else "Seen and unseen"
+    fig.update_layout(
+        title=f"{title_split}: per-stock {metric} distribution across core long models",
+        template="plotly_dark",
+        height=540,
+        margin=dict(l=20, r=20, t=72, b=54),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(15,23,42,.55)",
+        boxmode="overlay",
+    )
+    if metric == "QLIKE" and split_filter == "Seen test":
+        fig.add_hline(
+            y=BENCHMARK_RESULTS["Seen test"]["EWMA"]["QLIKE"],
+            line_dash="dash", line_color=MODEL_COLOR_MAP["EWMA"], opacity=.8,
+            annotation_text="EWMA seen benchmark", annotation_position="top left",
+        )
+    fig.update_xaxes(
+        title="Model family",
+        tickmode="array",
+        tickvals=list(range(len(model_order))),
+        ticktext=family_order,
+        range=[-0.6, len(model_order) - 0.4],
+    )
+    fig.update_yaxes(title=metric)
+    apply_metric_axis_format(fig, metric, log_scale=False)
+    return fig
+
+
+def benchmark_comparison_note(metric: str) -> str:
+    ewma = BENCHMARK_RESULTS["Seen test"]["EWMA"][metric]
+    xgb_seen = LONG_RESULTS.loc[LONG_RESULTS["Model"].eq("XGB Long"), f"Seen {metric}"].iloc[0]
+    return (
+        f"Benchmark context: EWMA seen {metric} = {ewma:.6g}; "
+        f"XGB Long seen {metric} = {xgb_seen:.6g}. "
+        "The benchmark is shown as a reference line, while the main comparison remains between the five candidate model families."
+    )
+
+
+def plot_unseen_leaderboard(metric: str = "QLIKE") -> go.Figure:
+    col = f"Unseen {metric}"
+    d = LONG_RESULTS.dropna(subset=[col]).sort_values(col, ascending=True).copy()
+    fig = px.bar(d.iloc[::-1], x=col, y="Model", orientation="h", text=col, color="Group", title=f"Unseen anonymous performance: {metric} leaderboard")
+    fig.update_traces(texttemplate="%{text:.4g}", textposition="outside", cliponaxis=False)
+    fig.update_layout(template="plotly_dark", height=410, margin=dict(l=20, r=35, t=55, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(15,23,42,.55)", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    fig.update_xaxes(title=metric)
+    fig.update_yaxes(title="")
+    return fig
+
+def plot_delta_qlike() -> go.Figure:
+    d = LONG_RESULTS.dropna(subset=["Δ QLIKE"]).sort_values("Δ QLIKE", ascending=True).copy()
+    fig = px.bar(
+        d,
+        x="Δ QLIKE",
+        y="Model",
+        color="Group",
+        orientation="h",
+        text="Δ QLIKE",
+        title="Transfer shift from seen test to unseen stocks",
+    )
+    fig.update_traces(texttemplate="%{text:.4f}", textposition="outside", cliponaxis=False)
+    fig.update_layout(template="plotly_dark", height=410, margin=dict(l=20, r=45, t=55, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(15,23,42,.55)", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    fig.update_xaxes(title="Unseen QLIKE − Seen QLIKE", zeroline=True, zerolinecolor="rgba(248,250,252,.55)")
+    fig.update_yaxes(title="")
+    return fig
+
+def tech_long_summary(metric: str = "QLIKE") -> pd.DataFrame:
+    if TECH_PER_STOCK_RESULTS.empty:
+        return pd.DataFrame()
+    d = TECH_PER_STOCK_RESULTS.copy()
+    if metric not in d.columns:
+        metric = "QLIKE"
+    summary = (
+        d.groupby(["Model", "Model Type"], as_index=False)
+        .agg(
+            median_metric=(metric, "median"),
+            mean_metric=(metric, "mean"),
+            n_stocks=("stock_id", "nunique"),
+        )
+        .sort_values("median_metric", ascending=True)
+    )
+    return summary
+
+
+def plot_tech_stock_box(metric: str = "QLIKE") -> go.Figure:
+    if TECH_PER_STOCK_RESULTS.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="tech_per_stock_all_models.csv was not found.", x=0.5, y=0.5, showarrow=False)
+        fig.update_layout(template="plotly_dark", height=430, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(15,23,42,.55)")
+        return fig
+
+    d = TECH_PER_STOCK_RESULTS[TECH_PER_STOCK_RESULTS["Model"].isin(CORE_LONG_MODELS)].copy()
+    if metric not in d.columns:
+        metric = "QLIKE"
+    d[metric] = pd.to_numeric(d[metric], errors="coerce")
+    d = d.dropna(subset=[metric])
+    model_order = [m for m in CORE_LONG_MODELS if m in set(d["Model"].astype(str))]
+    d["Model"] = pd.Categorical(d["Model"], categories=model_order, ordered=True)
+    d["Family"] = d["Model"].astype(str).map(CORE_FAMILY_LABELS).fillna(d["Model"].astype(str))
+    d = d.sort_values(["Model", "stock_id"])
+
+    fig = px.box(
+        d, x="Family", y=metric, color="Model", points=False,
+        hover_data=["stock_id", "n_rows"],
+        category_orders={"Model": model_order, "Family": [CORE_FAMILY_LABELS[m] for m in model_order]},
+        color_discrete_map=MODEL_COLOR_MAP,
+        title=f"Named tech stocks: per-stock {metric} distribution",
+    )
+    fig.update_traces(boxmean=True, line=dict(width=2.2), opacity=1.0)
+    positive = d[metric][d[metric] > 0]
+    if len(positive) and positive.max() / max(positive.min(), EPS) > 100:
+        fig.update_yaxes(type="log", title=f"{metric} (log scale due to transfer outliers)")
+    else:
+        fig.update_yaxes(title=metric)
+    fig.update_layout(
+        template="plotly_dark", height=500, margin=dict(l=20, r=20, t=70, b=28),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(15,23,42,.55)", showlegend=False,
+    )
+    fig.update_xaxes(title="Model family")
+    return fig
+
+def plot_tech_leaderboard(metric: str = "QLIKE") -> go.Figure:
+    summary = tech_long_summary(metric)
+    if summary.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="tech_per_stock_all_models.csv was not found.", x=0.5, y=0.5, showarrow=False)
+        fig.update_layout(template="plotly_dark", height=390, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(15,23,42,.55)")
+        return fig
+    summary = summary[summary["Model"].isin(CORE_LONG_MODELS)].sort_values("median_metric", ascending=True)
+    summary["Family"] = summary["Model"].map(CORE_FAMILY_LABELS)
+    fig = px.bar(
+        summary.iloc[::-1], x="median_metric", y="Family", orientation="h", color="Model", text="median_metric",
+        color_discrete_map=MODEL_COLOR_MAP, title=f"Tech-stock median {metric} leaderboard",
+    )
+    fig.update_traces(texttemplate="%{text:.4g}", textposition="outside", cliponaxis=False)
+    positive = summary["median_metric"][summary["median_metric"] > 0]
+    if len(positive) and positive.max() / max(positive.min(), EPS) > 100:
+        fig.update_xaxes(type="log", title=f"Median {metric} (log scale)")
+    else:
+        fig.update_xaxes(title=f"Median {metric}")
+    fig.update_layout(
+        template="plotly_dark", height=390, margin=dict(l=20, r=45, t=55, b=20),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(15,23,42,.55)", showlegend=False,
+    )
+    fig.update_yaxes(title="")
+    return fig
+
+
+def three_way_transfer_df(metric: str = "QLIKE") -> pd.DataFrame:
+    rows = []
+    if not PER_STOCK_LONG_RESULTS.empty:
+        for split in ["Seen test", "Unseen anonymous"]:
+            d = PER_STOCK_LONG_RESULTS[
+                PER_STOCK_LONG_RESULTS["Split"].eq(split) & PER_STOCK_LONG_RESULTS["Model"].isin(CORE_LONG_MODELS)
+            ].copy()
+            for model, g in d.groupby("Model"):
+                if metric in g.columns:
+                    rows.append({"Dataset": split, "Model": model, "Value": float(pd.to_numeric(g[metric], errors="coerce").median())})
+    else:
+        for _, r in LONG_RESULTS[LONG_RESULTS["Model"].isin(CORE_LONG_MODELS)].iterrows():
+            for split, label in [("Seen", "Seen test"), ("Unseen", "Unseen anonymous")]:
+                val = r.get(f"{split} {metric}")
+                if pd.notna(val):
+                    rows.append({"Dataset": label, "Model": r["Model"], "Value": float(val)})
+
+    if not TECH_PER_STOCK_RESULTS.empty:
+        d = TECH_PER_STOCK_RESULTS[TECH_PER_STOCK_RESULTS["Model"].isin(CORE_LONG_MODELS)].copy()
+        for model, g in d.groupby("Model"):
+            if metric in g.columns:
+                rows.append({"Dataset": "Named tech stocks", "Model": model, "Value": float(pd.to_numeric(g[metric], errors="coerce").median())})
+
+    out = pd.DataFrame(rows)
+    if len(out):
+        out["Dataset"] = pd.Categorical(out["Dataset"], categories=["Seen test", "Unseen anonymous", "Named tech stocks"], ordered=True)
+        out["Model"] = pd.Categorical(out["Model"], categories=CORE_LONG_MODELS, ordered=True)
+        out["Family"] = out["Model"].astype(str).map(CORE_FAMILY_LABELS)
+        out = out.sort_values(["Family", "Dataset"])
+    return out
+
+
+def generalisability_distribution_df(metric: str = "QLIKE") -> pd.DataFrame:
+    rows = []
+    if not PER_STOCK_LONG_RESULTS.empty:
+        d = PER_STOCK_LONG_RESULTS[
+            PER_STOCK_LONG_RESULTS["Model"].isin(CORE_LONG_MODELS)
+        ].copy()
+        if "Model Group" in d.columns:
+            d = d[d["Model Group"].astype(str).eq("Normal long models")].copy()
+        keep_cols = [c for c in ["Split", "Model", "stock_id", "n_rows", metric] if c in d.columns]
+        d = d[keep_cols].copy()
+        d = d.rename(columns={"Split": "Dataset", metric: "Value"})
+        rows.append(d)
+
+    if not TECH_PER_STOCK_RESULTS.empty:
+        t = TECH_PER_STOCK_RESULTS[TECH_PER_STOCK_RESULTS["Model"].isin(CORE_LONG_MODELS)].copy()
+        keep_cols = [c for c in ["Dataset", "Model", "stock_id", "n_rows", metric] if c in t.columns]
+        t = t[keep_cols].copy().rename(columns={metric: "Value"})
+        rows.append(t)
+
+    if not rows:
+        return pd.DataFrame()
+    out = pd.concat(rows, ignore_index=True)
+    out["Value"] = pd.to_numeric(out["Value"], errors="coerce")
+    out = out.dropna(subset=["Value"])
+    out = out[out["Model"].isin(CORE_LONG_MODELS)].copy()
+    out["Family"] = out["Model"].astype(str).map(CORE_FAMILY_LABELS)
+    out["Dataset"] = out["Dataset"].replace({"Seen": "Seen test", "Unseen": "Unseen anonymous"})
+    out["Dataset"] = pd.Categorical(out["Dataset"], categories=["Seen test", "Unseen anonymous", "Named tech stocks"], ordered=True)
+    out["Model"] = pd.Categorical(out["Model"], categories=CORE_LONG_MODELS, ordered=True)
+    out["Family"] = pd.Categorical(out["Family"], categories=[CORE_FAMILY_LABELS[m] for m in CORE_LONG_MODELS], ordered=True)
+    return out.sort_values(["Dataset", "Model"])
+
+
+def plot_generalisability_box(metric: str = "QLIKE") -> go.Figure:
+    """Grouped per-stock transfer box plot.
+
+    Each model family is on the x-axis. Within each family, three thick coloured
+    boxes show seen anonymous, unseen anonymous and named tech-stock performance.
+    Numeric x-positions are used so grouped boxes align perfectly beneath labels.
+    """
+    d = generalisability_distribution_df(metric)
+    if d.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="Generalisability distributions are unavailable.", x=0.5, y=0.5, showarrow=False)
+        fig.update_layout(template="plotly_dark", height=500, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(15,23,42,.55)")
+        return fig
+
+    d["Value"] = pd.to_numeric(d["Value"], errors="coerce")
+    d = d.dropna(subset=["Value"])
+    log_scale = should_use_log_axis(d["Value"])
+
+    dataset_order = ["Seen test", "Unseen anonymous", "Named tech stocks"]
+    dataset_colors = {
+        "Seen test":         "#22d3ee",   # vivid cyan
+        "Unseen anonymous":  "#4ade80",   # vivid green
+        "Named tech stocks": "#fbbf24",   # vivid amber
+    }
+    dataset_offsets = {
+        "Seen test":         -0.21,
+        "Unseen anonymous":   0.00,
+        "Named tech stocks":  0.21,
+    }
+    family_order = [CORE_FAMILY_LABELS[m] for m in CORE_LONG_MODELS]
+    family_lookup = {family: i for i, family in enumerate(family_order)}
+
+    d["Family"] = d["Family"].astype(str)
+    d["Dataset"] = d["Dataset"].astype(str)
+
+    fig = go.Figure()
+    for dataset in dataset_order:
+        for family in family_order:
+            vals = d.loc[d["Dataset"].eq(dataset) & d["Family"].eq(family), "Value"].dropna()
+            if vals.empty:
+                continue
+            x0 = family_lookup[family] + dataset_offsets[dataset]
+            fig.add_trace(go.Box(
+                x=[x0] * len(vals),
+                y=vals,
+                name=dataset,
+                legendgroup=dataset,
+                showlegend=(family == family_order[0]),
+                boxpoints=False,
+                boxmean=True,
+                width=0.16,
+                marker_color=dataset_colors[dataset],
+                fillcolor=_hex_to_rgba(dataset_colors[dataset], 0.18),
+                line=dict(color=dataset_colors[dataset], width=2.0),
+                whiskerwidth=0.5,
+                hovertemplate=(
+                    "Dataset=" + dataset + "<br>Model family=" + family + "<br>" + metric + "=%{y:.6g}<extra></extra>"
+                ),
+            ))
+
+    fig.update_layout(
+        title=f"Generalisability comparison: per-stock {metric} distribution by model and dataset",
+        template="plotly_dark",
+        height=630,
+        margin=dict(l=20, r=20, t=78, b=60),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(15,23,42,.55)",
+        boxmode="overlay",
+        legend=dict(
+            title="Evaluation dataset",
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+        ),
+    )
+    fig.update_xaxes(
+        title="Model family",
+        tickmode="array",
+        tickvals=list(range(len(family_order))),
+        ticktext=family_order,
+        range=[-0.55, len(family_order) - 0.45],
+    )
+    fig.update_yaxes(title=f"{metric}{' (log scale)' if log_scale else ''}", rangemode="tozero" if not log_scale else None)
+    apply_metric_axis_format(fig, metric, log_scale=log_scale)
+    return fig
+
+
+def plot_feature_importance(model, feature_names: list[str]) -> go.Figure | None:
+    if model is None or not hasattr(model, "feature_importances_"):
+        return None
+    fi = np.asarray(model.feature_importances_, dtype=float)
+    if len(fi) != len(feature_names):
+        return None
+    d = pd.DataFrame({"Feature": feature_names, "Importance": fi}).sort_values("Importance", ascending=False).head(14).iloc[::-1]
+    fig = px.bar(d, x="Importance", y="Feature", orientation="h", text="Importance", title="XGB Long feature importance")
+    fig.update_traces(texttemplate="%{text:.3f}", textposition="outside")
+    fig.update_layout(template="plotly_dark", height=470, margin=dict(l=20, r=30, t=55, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(15,23,42,.55)")
+    return fig
+
+def classify_regime(value: float, dist: pd.Series) -> tuple[str, str]:
+    d = pd.Series(dist).replace([np.inf, -np.inf], np.nan).dropna()
+    if len(d) < 4:
+        return "Limited history", "Use the connected forecast line as a directional read; stronger regimes need more comparable rows."
+    q50, q75, q90 = d.quantile([.50, .75, .90]).values
+    if value >= q90:
+        return "High volatility", "The forward point is in the upper tail of the selected forecast window."
+    if value >= q75:
+        return "Elevated volatility", "The forward point is above the late-window upper quartile."
+    if value >= q50:
+        return "Active", "The forward point is above the late-window median."
+    return "Calm", "The forward point is below the late-window median."
+
+def plot_bucket_replay(result: PredictionResult, selected_stock: str | None = None, selected_time: str | None = None) -> go.Figure:
+    pred = result.pred_df.copy()
+    feats = result.feature_df.copy()
+    fig = go.Figure()
+    visible_y: list[float] = []
+    sid, tid = selected_stock, selected_time
+    if {"stock_id", "time_id"}.issubset(pred.columns) and not pred.empty:
+        ordered_pred = pred.sort_values([c for c in ["stock_id", "time_id", "forecast_bucket"] if c in pred.columns])
+        if sid is None or tid is None:
+            sid, tid = ordered_pred.iloc[0]["stock_id"], ordered_pred.iloc[0]["time_id"]
+        pred = pred[(pred["stock_id"].astype(str) == str(sid)) & (pred["time_id"].astype(str) == str(tid))].copy()
+
+    if {"bucket", "realised_volatility"}.issubset(feats.columns):
+        hist = feats.dropna(subset=["bucket", "realised_volatility"]).copy()
+        if sid is not None and tid is not None and {"stock_id", "time_id"}.issubset(hist.columns):
+            hist = hist[(hist["stock_id"].astype(str) == str(sid)) & (hist["time_id"].astype(str) == str(tid))]
+        hist["bucket"] = pd.to_numeric(hist["bucket"], errors="coerce")
+        hist = hist.dropna(subset=["bucket"]).sort_values("bucket")
+        hist = hist[hist["bucket"].between(1, 19)]
+        visible_y.extend(pd.to_numeric(hist["realised_volatility"], errors="coerce").dropna().tolist())
+        if len(hist):
+            fig.add_trace(go.Scatter(x=hist["bucket"], y=hist["realised_volatility"], mode="lines", name="Observed volatility", line=dict(width=4, color="#38bdf8")))
+
+    if {"forecast_bucket", "predicted_next_rv"}.issubset(pred.columns):
+        p = pred.dropna(subset=["forecast_bucket", "predicted_next_rv"]).copy()
+        p["forecast_bucket"] = pd.to_numeric(p["forecast_bucket"], errors="coerce")
+        p = p.dropna(subset=["forecast_bucket"]).sort_values("forecast_bucket")
+        p = p[p["forecast_bucket"].between(17, 20)]
+        visible_y.extend(pd.to_numeric(p["predicted_next_rv"], errors="coerce").dropna().tolist())
+        if len(p):
+            fig.add_trace(go.Scatter(
+                x=p["forecast_bucket"], y=p["predicted_next_rv"], mode="lines+markers",
+                name="Predicted volatility", line=dict(width=4, dash="dash", color="#22c55e"),
+                marker=dict(symbol="circle", size=9, color="#22c55e", line=dict(color="#eafff3", width=1.5)),
+            ))
+    ymax = max(visible_y) if visible_y else 1
+    fig.add_vrect(x0=16.5, x1=20.5, fillcolor="rgba(20,184,166,.16)", line_width=0, layer="below")
+    fig.add_annotation(x=18.5, y=ymax * 1.06, text="forecast window: buckets 17–20", showarrow=False, font=dict(size=12, color="#ccfbf1"))
+    fig.update_layout(template="plotly_dark", height=430, margin=dict(l=20, r=20, t=55, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(15,23,42,.55)", title="Observed path with connected late-window forecast", xaxis_title="30-second bucket", yaxis_title="Realised volatility", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    fig.update_xaxes(dtick=1, range=[0.5, 20.5])
+    fig.update_yaxes(range=[0, ymax * 1.16 if ymax > 0 else 1])
+    return fig
+
+def available_session_options(pred_df: pd.DataFrame) -> list[str]:
+    if not {"stock_id", "time_id"}.issubset(pred_df.columns):
+        return []
+    pairs = pred_df[["stock_id", "time_id"]].drop_duplicates().copy()
+    pairs["label"] = pairs["stock_id"].astype(str) + " | " + pairs["time_id"].astype(str)
+    return pairs["label"].tolist()
+
+def split_session_label(label: str) -> tuple[str | None, str | None]:
+    if " | " not in label:
+        return None, None
+    stock, time = label.split(" | ", 1)
+    return stock, time
+
+def subset_prediction_session(pred_df: pd.DataFrame, selected_stock: str | None, selected_time: str | None) -> pd.DataFrame:
+    d = pred_df.copy()
+    if selected_stock is not None and selected_time is not None and {"stock_id", "time_id"}.issubset(d.columns):
+        d = d[(d["stock_id"].astype(str) == str(selected_stock)) & (d["time_id"].astype(str) == str(selected_time))]
+    return d.sort_values([c for c in ["forecast_bucket", "bucket"] if c in d.columns])
+
+def forecast_interpretation(pred_df: pd.DataFrame) -> tuple[str, str, str, str]:
+    valid = pred_df.dropna(subset=[c for c in ["target_rv", "predicted_next_rv"] if c in pred_df.columns]).copy()
+    if valid.empty or not {"target_rv", "predicted_next_rv"}.issubset(valid.columns):
+        return ("Forecast read", "The connected prediction line is available, but observed next-bucket volatility is not available for comparison.", "Main risk", "Treat bucket 20 as a forward signal only; it has no observed value in the displayed window.")
+    valid["target_rv"] = pd.to_numeric(valid["target_rv"], errors="coerce")
+    valid["predicted_next_rv"] = pd.to_numeric(valid["predicted_next_rv"], errors="coerce")
+    valid = valid.dropna(subset=["target_rv", "predicted_next_rv"])
+    if valid.empty:
+        return ("Forecast read", "The forecast rows could not be compared with observed realised volatility.", "Main risk", "Check that target values are numeric and aligned to the next bucket.")
+    err = valid["predicted_next_rv"] - valid["target_rv"]
+    abs_err = err.abs()
+    largest = valid.loc[abs_err.idxmax()]
+    largest_bucket = int(largest.get("forecast_bucket", largest.get("bucket", 0))) if pd.notna(largest.get("forecast_bucket", largest.get("bucket", np.nan))) else "the window"
+    bias = float(err.mean())
+    observed_span = float(valid["target_rv"].max() - valid["target_rv"].min())
+    pred_span = float(valid["predicted_next_rv"].max() - valid["predicted_next_rv"].min())
+    bias_threshold = max(float(valid["target_rv"].mean()) * 0.12, EPS)
+    if bias < -bias_threshold:
+        read = "The model is lower than the observed late-window volatility on average."
+        risk = f"Largest miss occurs around bucket {largest_bucket}, with under-forecasting the key concern."
+    elif bias > bias_threshold:
+        read = "The model is higher than the observed late-window volatility on average."
+        risk = f"Largest miss occurs around bucket {largest_bucket}, with over-forecasting the key concern."
+    else:
+        read = "The average forecast level is close to the observed late-window volatility."
+        risk = f"The largest single-bucket miss is around bucket {largest_bucket}."
+    if pred_span < observed_span * 0.55 and observed_span > EPS:
+        behaviour = "Model behaviour: the prediction line is smoother than the observed path, so sudden jumps are the main stress case."
+    elif pred_span > observed_span * 1.35 and observed_span > EPS:
+        behaviour = "Model behaviour: the prediction line moves more sharply than the realised path in this upload."
+    else:
+        behaviour = "Model behaviour: the prediction line broadly tracks the late-window range in this upload."
+    return "Forecast read", read + " " + behaviour, "Main risk", risk
+
+def render_forecast_interpretation(pred_df: pd.DataFrame) -> None:
+    h1, b1, h2, b2 = forecast_interpretation(pred_df)
+    st.markdown(f"""
+        <div class="insight-card">
+          <h3>{h1}</h3>
+          <p>{b1}</p>
+          <h3 style="margin-top:.7rem;">{h2}</h3>
+          <p>{b2}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+def bucket_outcome_tag(row: pd.Series) -> str:
+    if "target_rv" not in row or pd.isna(row.get("target_rv")):
+        return "forward signal"
+    actual = float(row.get("target_rv", np.nan))
+    pred = float(row.get("predicted_next_rv", np.nan))
+    if not np.isfinite(actual) or not np.isfinite(pred):
+        return "check unavailable"
+    gap = pred - actual
+    threshold = max(abs(actual) * 0.20, 1e-7)
+    if abs(gap) <= threshold:
+        return "close read"
+    return "under-forecast" if gap < 0 else "over-forecast"
+
+def render_bucket_cards(pred_df: pd.DataFrame) -> None:
+    d = pred_df.copy()
+    if "forecast_bucket" in d.columns:
+        d = d.sort_values("forecast_bucket")
+    cols = st.columns(4)
+    rows = d.head(4).to_dict("records")
+    for idx, col in enumerate(cols):
+        if idx >= len(rows):
+            with col:
+                st.markdown("<div class='bucket-card'><div class='bucket-title'>No bucket</div><div class='bucket-read'>No forecast row available.</div></div>", unsafe_allow_html=True)
+            continue
+        row = pd.Series(rows[idx])
+        bucket = int(row.get("forecast_bucket", row.get("bucket", idx + 17))) if pd.notna(row.get("forecast_bucket", row.get("bucket", np.nan))) else idx + 17
+        observed = fmt(row.get("target_rv"), 6) if "target_rv" in row.index else "—"
+        predicted = fmt(row.get("predicted_next_rv"), 6)
+        tag = bucket_outcome_tag(row)
+        with col:
+            st.markdown(f"""
+                <div class="bucket-card">
+                  <div class="bucket-title">Bucket {bucket}</div>
+                  <div class="bucket-read">Observed next RV: <b>{observed}</b></div>
+                  <div class="bucket-read">Predicted RV: <b>{predicted}</b></div>
+                  <span class="bucket-tag">{tag}</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+PROCESS_STAGES = {
+    "1. Raw order book": {"title": "Second-by-second market depth", "body": "Each uploaded stock file is read as top-of-book market depth. Bid and ask prices, displayed sizes, time_id and seconds_in_bucket are standardised before any forecasting is attempted.", "focus": 0},
+    "2. Bucket construction": {"title": "WAP, spread and 30-second realised volatility", "body": "The app reconstructs a full second-by-second grid, forward-fills unchanged order-book states, computes WAP, spread and log returns, then aggregates every 30 seconds into bucket-level realised volatility.", "focus": 1},
+    "3. Temporal horizons": {"title": "Base, short, medium and long memory", "body": "The XGB Long model receives 32 inputs: seven base bucket statistics plus short, medium and long horizon features. The long layer captures five minutes of volatility regime using lag 10, rolling mean 10, rolling standard deviation 10 and regime ratios.", "focus": 2},
+    "4. Selected model": {"title": "XGB Long", "body": "The dashboard deploys XGB Long because it is the strongest long-horizon model by unseen-stock QLIKE in the supplied results. It is trained globally on anonymous stocks and then applied without retraining in the forecast page.", "focus": 3},
+    "5. Forecast output": {"title": "Connected next-bucket forecast", "body": "Rows 16, 17, 18 and 19 are shown as forecasts for buckets 17, 18, 19 and 20. The observed path is shown through bucket 19, while bucket 20 is kept as a forward-only prediction.", "focus": 4},
+}
+
+EVAL_STAGES = {
+    "1. Stock split": {"title": "40 seen and 20 unseen anonymous stocks", "body": "The data processing notebook samples 60 anonymous stocks, uses 40 for model development and locks away 20 for a final unseen-stock generalisation check.", "focus": 0},
+    "2. Session split": {"title": "Train, validation and test time_ids", "body": "Within the seen stocks, complete trading sessions are split into train, validation and test groups. Splitting by session avoids leakage from neighbouring buckets crossing train-test boundaries.", "focus": 1},
+    "3. Global fitting": {"title": "One pooled model across stocks", "body": "All eligible training rows are pooled into one large matrix. This replaces the earlier small expanding-window method and lets the model learn cross-stock volatility structure.", "focus": 2},
+    "4. Long horizon comparison": {"title": "Core and weighted variants tested", "body": "The modelling notebook compares base, short, medium and long horizons across the five core families. Weighted variants are retained as methodology sensitivity checks, but the final results pages focus on the core model families for clearer communication.", "focus": 3},
+    "5. Transfer read": {"title": "Seen test to unseen anonymous stocks", "body": "The unseen results check whether the model holds its performance when the stock identity was never used in training. This is the main generalisability evidence presented in the current app build.", "focus": 4},
+}
+
+def plot_stage_flow(stage_map: dict[str, dict[str, Any]], selected: str, title: str) -> go.Figure:
+    labels = list(stage_map.keys())
+    focus = stage_map[selected]["focus"]
+    x = list(range(len(labels)))
+    fig = go.Figure()
+    for i in range(len(labels) - 1):
+        fig.add_trace(go.Scatter(x=[x[i], x[i+1]], y=[0, 0], mode="lines", line=dict(color="#22c55e" if i < focus else "rgba(148,163,184,.36)", width=8), hoverinfo="skip", showlegend=False))
+    fig.add_trace(go.Scatter(x=x, y=[0]*len(labels), mode="markers+text", text=[l.replace(". ", ".<br>") for l in labels], textposition="bottom center", marker=dict(size=[34 if i == focus else 24 for i in range(len(labels))], color=["#38bdf8" if i == focus else "rgba(148,163,184,.55)" for i in range(len(labels))], line=dict(color="#f8fafc", width=[2 if i == focus else 1 for i in range(len(labels))])), hovertext=[stage_map[l]["title"] for l in labels], hoverinfo="text", showlegend=False))
+    fig.update_layout(template="plotly_dark", height=260, margin=dict(l=25, r=25, t=50, b=55), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(15,23,42,.55)", title=title, xaxis=dict(visible=False, range=[-0.45, len(labels)-0.55]), yaxis=dict(visible=False, range=[-0.55, 0.55]))
+    return fig
+
+def stage_detail_card(stage_map: dict[str, dict[str, Any]], selected: str) -> None:
+    item = stage_map[selected]
+    st.markdown(f"""
+        <div class="stage-card">
+          <h3>{item['title']}</h3>
+          <div class="accent-line"></div>
+          <p>{item['body']}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+# =============================================================================
+# Load model
+# =============================================================================
+deployed_model = load_model_any(("xgb_long.joblib", "XGB_Long.joblib", "models/xgb_long.joblib"))
+feature_names = FEATURES_LONG
+if deployed_model is not None:
+    try:
+        n_features = int(getattr(deployed_model, "n_features_in_", len(feature_names)))
+        if n_features != len(feature_names):
+            st.warning(f"Loaded XGB Long model expects {n_features} features, but the app feature list has {len(feature_names)}.")
+    except Exception:
+        pass
+
+# =============================================================================
+# Header and tabs
+# =============================================================================
+st.markdown("""
+    <div class="hero">
+      <h1>Volatility Signal Desk</h1>
+    </div>
+    """, unsafe_allow_html=True)
+
+if deployed_model is None:
+    st.error("The deployed XGB Long model file `xgb_long.joblib` was not found in this folder.")
+    st.stop()
+
+overview_tab, evidence_tab, method_tab, replay_tab, generalise_tab, limits_tab, glossary_tab = st.tabs([
+    "Project Overview", "Model Results", "Workflow", "Bucket Forecast", "Generalisability", "Limitations", "Glossary",
+])
+
+# -----------------------------------------------------------------------------
+# Overview
+# -----------------------------------------------------------------------------
+with overview_tab:
+    st.markdown("### Project Overview")
+    st.markdown("""
+        <div class='card'>
+          <h3>Forecasting aim</h3>
+          <p>The project predicts realised volatility for the next 30-second bucket from order-book microstructure. The final workflow trains on anonymous stocks, checks transfer to unseen anonymous stocks, and then tests whether the signal generalises to named technology stocks.</p>
+        </div>
+        """, unsafe_allow_html=True)
+    st.write("")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        compact_metric_card("Deployed model", "XGB Long", "selected forecast model")
+    with c2:
+        compact_metric_card("Target", "t + 1", "next 30-second realised volatility")
+    with c3:
+        compact_metric_card("Input design", "32 features", "base + short + medium + long")
+    with c4:
+        compact_metric_card("Primary metric", "QLIKE", "volatility-focused loss")
+
+    st.markdown("### Candidate model families")
+    m1, m2, m3, m4, m5 = st.columns(5)
+    model_cards = [
+        (m1, "Linear", "Baseline family", "transparent relationship between features and volatility"),
+        (m2, "Lasso", "Sparse linear", "regularised linear model with automatic feature selection"),
+        (m3, "Random Forest", "Tree ensemble", "bagged non-linear trees for robust tabular prediction"),
+        (m4, "XGBoost", "Selected model", "boosted trees trained on the long feature horizon"),
+        (m5, "MLP", "Neural network", "non-linear benchmark using scaled feature inputs"),
+    ]
+    for col, name, tag, desc in model_cards:
+        with col:
+            st.markdown(f"""
+                <div class="model-chip">
+                  <div class="name">{name}</div>
+                  <div class="small-muted">{desc}</div>
+                  <span class="tag">{tag}</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+    st.markdown("### Benchmark used for comparison")
+    st.markdown("<div class='card'><h3>EWMA</h3><p>A simple exponentially weighted moving average rule. It is included as a clean reference point to test whether the learned model families add value beyond direct volatility smoothing.</p></div>", unsafe_allow_html=True)
+
+    st.markdown("### How to read the dashboard")
+    a, b, c = st.columns(3)
+    with a:
+        st.markdown("<div class='card'><h3>1. Evidence</h3><p>Model Results focuses on seen-test performance for the five core long-horizon model families.</p></div>", unsafe_allow_html=True)
+    with b:
+        st.markdown("<div class='card'><h3>2. Workflow</h3><p>The workflow page follows the new processing and evaluation structure from raw order book to XGB Long output.</p></div>", unsafe_allow_html=True)
+    with c:
+        st.markdown("<div class='card'><h3>3. Transfer</h3><p>Generalisability compares seen anonymous, unseen anonymous and named tech-stock results to show whether the signal survives dataset shift.</p></div>", unsafe_allow_html=True)
+
+# -----------------------------------------------------------------------------
+# Model Results
+# -----------------------------------------------------------------------------
+with evidence_tab:
+    st.markdown("### Seen-stock model evidence")
+    st.markdown(
+        "<div class='status-info'>This section focuses on the five core candidate families using the long feature horizon. Unseen anonymous stocks and named tech stocks are handled in the Generalisability tab because they answer the transfer question rather than the model-selection question.</div>",
+        unsafe_allow_html=True,
+    )
+
+    metric_choice = st.radio(
+        "Metric view", ["QLIKE", "RMSPE", "RMSE"], horizontal=True, key="evidence_metric_choice",
+    )
+
+    st.plotly_chart(
+        plot_per_stock_long_box("Normal long models", metric_choice, split_filter="Seen test"),
+        use_container_width=True,
+        key=f"seen_core_long_per_stock_box_{metric_choice}",
+    )
+
+    st.markdown("### Benchmark context")
+    b1, b2, b3 = st.columns(3)
+    with b1:
+        compact_metric_card("EWMA seen QLIKE", fmt(BENCHMARK_RESULTS["Seen test"]["EWMA"]["QLIKE"]), "simple exponentially weighted volatility baseline")
+    with b2:
+        xgb_seen = LONG_RESULTS.loc[LONG_RESULTS["Model"].eq("XGB Long"), "Seen QLIKE"].iloc[0]
+        compact_metric_card("XGB Long seen QLIKE", fmt(xgb_seen), "selected deployed model")
+    with b3:
+        rf_seen = LONG_RESULTS.loc[LONG_RESULTS["Model"].eq("RF Long"), "Seen QLIKE"].iloc[0]
+        compact_metric_card("RF Long seen QLIKE", fmt(rf_seen), "strong tree-ensemble comparator")
+
+    st.caption(benchmark_comparison_note(metric_choice))
+
+# -----------------------------------------------------------------------------
+# Workflow
+# -----------------------------------------------------------------------------
+with method_tab:
+    st.markdown("### Prediction workflow")
+    process_choice = st.radio("Prediction stage", list(PROCESS_STAGES.keys()), horizontal=True, key="process_stage_choice", label_visibility="collapsed")
+    st.plotly_chart(plot_stage_flow(PROCESS_STAGES, process_choice, "Prediction workflow"), use_container_width=True, key=f"method_signal_flow_{process_choice}")
+    stage_detail_card(PROCESS_STAGES, process_choice)
+
+    st.write("")
+    st.markdown("### Evaluation design")
+    eval_choice = st.radio("Evaluation stage", list(EVAL_STAGES.keys()), horizontal=True, key="eval_stage_choice", label_visibility="collapsed")
+    st.plotly_chart(plot_stage_flow(EVAL_STAGES, eval_choice, "Evaluation design"), use_container_width=True, key=f"method_evaluation_flow_{eval_choice}")
+    stage_detail_card(EVAL_STAGES, eval_choice)
+
+# -----------------------------------------------------------------------------
+# Bucket Forecast
+# -----------------------------------------------------------------------------
+with replay_tab:
+    st.markdown("### Bucket 17–20 forecast overlay")
+    st.caption("XGB Long scores the late-session window by using feature rows 16, 17, 18 and 19. These are displayed as forecasts for buckets 17, 18, 19 and the forward-only bucket 20.")
+    uploaded = st.file_uploader("Upload order book CSV", type=["csv"], label_visibility="collapsed", key="replay_file_uploader")
+
+    if uploaded is None:
+        st.markdown("""
+            <div class="status-info">
+            Upload a raw order book file or a precomputed feature table. The app applies the same 
+    WAP, spread, 30-second bucket and long-horizon feature construction used for the deployed 
+    XGB Long model.
+    
+    > 📌 **Best results with exactly 10 minutes (600 seconds) of data** — the model was trained on 20-bucket sessions.
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        try:
+            file_bytes = uploaded.getvalue()
+            raw_preview = pd.read_csv(io.BytesIO(file_bytes), nrows=5)
+            with st.spinner("Building XGB Long forecast overlay..."):
+                if set(feature_names).issubset(raw_preview.columns) or set(BASE_FEATURES).issubset(raw_preview.columns):
+                    raw = read_uploaded_csv(file_bytes)
+                    result = predict_from_features_replay(raw, deployed_model, feature_names)
+                else:
+                    result = predict_from_raw_orderbook_replay(file_bytes, deployed_model, feature_names)
+
+            pred_all = result.pred_df.copy()
+            session_options = available_session_options(pred_all)
+            selected_stock = selected_time = None
+            if session_options:
+                selected_label = st.selectbox("Stock-session shown", session_options, index=0, help="Only one stock-session is plotted at a time so the 17–20 forecast path remains readable.", key="forecast_session_select")
+                selected_stock, selected_time = split_session_label(selected_label)
+
+            pred = subset_prediction_session(pred_all, selected_stock, selected_time)
+            latest = pred.sort_values([c for c in ["forecast_bucket", "bucket"] if c in pred.columns]).iloc[-1]
+            latest_rv = float(latest["predicted_next_rv"])
+            regime, posture = classify_regime(latest_rv, pred["predicted_next_rv"])
+            valid = pred.dropna(subset=["target_rv", "predicted_next_rv"]) if "target_rv" in pred.columns else pd.DataFrame()
+            qlike_value = qlike(valid["target_rv"], valid["predicted_next_rv"]) if len(valid) else np.nan
+
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Latest forecast", fmt(latest_rv))
+            k2.metric("Regime", regime)
+            k3.metric("Forecasts shown", f"{len(pred):,}")
+            k4.metric("Forecast window", "17–20")
+            if result.rows_scored > len(pred):
+                st.caption(f"{result.rows_scored:,} forecast rows were scored across the upload. The chart displays the selected stock-session only.")
+            if result.warnings:
+                st.caption("; ".join(result.warnings))
+
+            c_chart, c_read = st.columns([1.55, .95])
+            with c_chart:
+                st.plotly_chart(plot_bucket_replay(result, selected_stock, selected_time), use_container_width=True, key="replay_bucket_path")
+            with c_read:
+                render_forecast_interpretation(pred)
+                st.write("")
+                st.markdown(f"<div class='status-good'><b>Signal posture:</b> {posture}</div>", unsafe_allow_html=True)
+
+            st.markdown("### Forecast snapshot")
+            render_bucket_cards(pred)
+
+            if len(valid):
+                b1, b2, b3 = st.columns(3)
+                b1.metric("Window RMSE", fmt(rmse(valid["target_rv"], valid["predicted_next_rv"])))
+                b2.metric("Window RMSPE", fmt(rmspe(valid["target_rv"], valid["predicted_next_rv"]), 4))
+                b3.metric("Window QLIKE", fmt(qlike_value))
+            else:
+                st.markdown("<div class='status-info'>Observed target values were not available for this selected session, so window-level error metrics are hidden.</div>", unsafe_allow_html=True)
+
+            display_cols = [c for c in ["stock_id", "time_id", "bucket", "forecast_bucket", "realised_volatility", "target_rv", "predicted_next_rv", "absolute_error", "percentage_error"] if c in pred.columns]
+            with st.expander("Forecast rows", expanded=False):
+                st.dataframe(pred[display_cols], use_container_width=True, hide_index=True)
+                st.download_button("Download forecast predictions", pred_all.to_csv(index=False).encode("utf-8"), "xgb_long_bucket_17_20_forecast.csv", "text/csv", key="download_replay_predictions")
+        except Exception as e:
+            st.markdown(f"<div class='status-warn'><b>Could not run the forecast overlay.</b><br>{str(e)}</div>", unsafe_allow_html=True)
+            with st.expander("Advanced: recognised column names", expanded=False):
+                st.write("Rename columns to recognised concepts such as bid price, ask price, bid depth and ask depth.")
+                st.json(SYNONYMS)
+
+# -----------------------------------------------------------------------------
+# Generalisability
+# -----------------------------------------------------------------------------
+with generalise_tab:
+    st.markdown("### Generalisability: seen, unseen and named tech stocks")
+    st.markdown(
+        "<div class='status-info'>This tab separates transfer evidence from model selection. Each model family now has three coloured per-stock distributions: seen anonymous, unseen anonymous and named tech stocks.</div>",
+        unsafe_allow_html=True,
+    )
+
+    metric_choice_g = st.radio(
+        "Generalisability metric", ["QLIKE", "RMSPE", "RMSE"], horizontal=True, key="generalise_metric_choice",
+    )
+
+    distribution_df = generalisability_distribution_df(metric_choice_g)
+    if not distribution_df.empty:
+        med = distribution_df.groupby(["Dataset", "Family"], as_index=False)["Value"].median().dropna()
+        best_seen = med[med["Dataset"].astype(str).eq("Seen test")].sort_values("Value").iloc[0]
+        best_unseen = med[med["Dataset"].astype(str).eq("Unseen anonymous")].sort_values("Value").iloc[0]
+        best_tech_df = med[med["Dataset"].astype(str).eq("Named tech stocks")].sort_values("Value")
+        k1, k2, k3 = st.columns(3)
+        with k1:
+            compact_metric_card(f"Best seen {metric_choice_g}", fmt(best_seen["Value"]), best_seen["Family"])
+        with k2:
+            compact_metric_card(f"Best unseen {metric_choice_g}", fmt(best_unseen["Value"]), best_unseen["Family"])
+        with k3:
+            if len(best_tech_df):
+                best_tech = best_tech_df.iloc[0]
+                compact_metric_card(f"Best tech {metric_choice_g}", fmt(best_tech["Value"]), best_tech["Family"])
+            else:
+                compact_metric_card(f"Best tech {metric_choice_g}", "—", "tech results unavailable")
+
+    st.plotly_chart(
+        plot_generalisability_box(metric_choice_g),
+        use_container_width=True,
+        key=f"generalise_per_stock_box_{metric_choice_g}",
+    )
+
+    st.markdown("""
+        <div class='card'>
+          <h3>How to read the transfer result</h3>
+          <p>For each model family, the three coloured boxes compare seen anonymous, unseen anonymous and named tech-stock performance. Similar boxes within a model indicate stronger transfer across datasets. A large shift in the tech-stock box signals dataset shift or model sensitivity to the new stock universe.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+# -----------------------------------------------------------------------------
+# Limitations
+# -----------------------------------------------------------------------------
+with limits_tab:
+    st.markdown("### Project limitations")
+    st.markdown(
+        "<div class='status-info'>These limitations relate to the forecasting assumptions, evaluation methodology and transferability of the volatility modelling framework.</div>",
+        unsafe_allow_html=True,
+    )
+
+    # =========================
+    # ROW 1
+    # =========================
+    l1, l2, l3 = st.columns(3, gap="large")
+
+    with l1:
+        st.markdown(
+            """
+            <div class='limit-card'>
+            <h3>Non-sequential time_ids</h3>
+            <p>Dataset 1 consists of independent 10-minute sessions rather than a continuous chronological time series. The model therefore learns transferable local volatility dynamics, but does not capture longer-term market evolution across sessions.</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with l2:
+        st.markdown(
+            """
+            <div class='limit-card'>
+            <h3>No repeated cross-validation</h3>
+            <p>The evaluation uses fixed train/validation/test splits to preserve session independence and unseen-stock testing. While methodologically cleaner for this dataset, results may still vary under different stock or session partitions.</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with l3:
+        st.markdown(
+            """
+            <div class='limit-card'>
+            <h3>Distribution shift</h3>
+            <p>The anonymous Optiver stocks and named technology stocks differ structurally in liquidity, price scale and trading behaviour. These differences may reduce transfer performance, particularly for more complex models.</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    st.write("")
+
+    # =========================
+    # ROW 2
+    # =========================
+    l4, l5, l6 = st.columns(3, gap="large")
+
+    with l4:
+        st.markdown(
+            """
+            <div class='limit-card'>
+            <h3>Microstructure noise</h3>
+            <p>30-second realised volatility is highly noisy and sensitive to short-term order-book fluctuations. Sudden spikes, liquidity shocks and event-driven volatility remain difficult to predict accurately.</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with l5:
+        st.markdown(
+            """
+            <div class='limit-card'>
+            <h3>Regime sensitivity</h3>
+            <p>The models capture volatility persistence more effectively than abrupt regime changes. Prediction quality may deteriorate during unusual market conditions or periods of extreme uncertainty.</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+
+
+    st.write("")
+
+        # =========================
+    # FUTURE WORK
+    # =========================
+    st.markdown("### Future work considerations")
+
+    f1, f2, f3 = st.columns(3, gap="large")
+
+    with f1:
+        st.markdown(
+            """
+            <div class='future-card'>
+            <h3>True sequential forecasting</h3>
+            <p>Extend the framework to fully sequential datasets with continuous chronological ordering, allowing recursive multi-step forecasting and longer-term volatility regime modelling across sessions.</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with f2:
+        st.markdown(
+            """
+            <div class='future-card'>
+            <h3>Adaptive regime learning</h3>
+            <p>Investigate online recalibration or adaptive learning approaches that dynamically adjust when market conditions, liquidity structure or volatility regimes shift over time.</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with f3:
+        st.markdown(
+            """
+            <div class='future-card'>
+            <h3>Broader transfer evaluation</h3>
+            <p>Test whether learned short-horizon volatility dynamics transfer beyond technology stocks to different sectors, international markets and lower-liquidity securities.</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+# Glossary 
+
+with glossary_tab:
+    st.markdown("### Key Terms & Concepts")
+    st.markdown(
+        "<div class='status-info'>A reference guide for financial and statistical terms used throughout this dashboard.</div>",
+        unsafe_allow_html=True
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("<div class='card'><h3> Realised Volatility (RV)</h3><p>How much a stock's price actually moved over a 30-second window. Computed as the square root of the sum of squared log returns. Higher RV = more price movement = more uncertainty. This is both the input feature and the prediction target.</p></div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='card'><h3> WAP — Weighted Average Price</h3><p>A better estimate of the true transaction price than the simple mid-price. Weights the best bid and ask prices by the opposing side's volume: WAP = (bid × ask_size + ask × bid_size) / (bid_size + ask_size). More representative of where trades actually occur.</p></div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='card'><h3> Bid-Ask Spread</h3><p>The gap between the highest price a buyer will pay (bid) and the lowest a seller will accept (ask). A wider spread signals lower liquidity and often precedes higher volatility. Computed as: ask_price / bid_price − 1.</p></div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='card'><h3> Volatility Clustering</h3><p>The well-known pattern that high volatility tends to follow high volatility, and low follows low. This is the core reason our lag and rolling mean features work — the recent past is the best predictor of the near future in short-horizon volatility forecasting.</p></div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='card'><h3> RMSPE — Root Mean Squared Percentage Error</h3><p>Measures prediction error as a percentage relative to the true value. Useful when comparing errors across stocks or sessions with different volatility scales. Lower RMSPE means the model’s forecasts are proportionally closer to actual market volatility.</p></div>", unsafe_allow_html=True)
+    with col2:
+        st.markdown("<div class='card'><h3> QLIKE</h3><p>A finance-standard loss function for volatility forecasting. Unlike RMSE, QLIKE heavily penalises underestimating volatility — which is the costly error in trading. Formula: mean(σ²/σ̂² − log(σ²/σ̂²) − 1). Lower is better. All models are ranked by QLIKE in this dashboard.</p></div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='card'><h3> Options Pricing & Volatility</h3><p>Options are contracts giving the right to buy or sell a stock at a set price. Their value is directly driven by expected volatility — higher vol = more expensive options. Predicting RV lets market makers price options more accurately and manage risk in real time.</p></div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='card'><h3> Backtest</h3><p>Testing a model on historical data to check if predictions match actual outcomes. Here the model predicts buckets 17–19 using only buckets 1–16 as input — mimicking real deployment where earlier buckets are always observed before you need to predict.</p></div>", unsafe_allow_html=True)
+        
+        st.markdown("<div class='card'><h3> RMSE — Root Mean Squared Error</h3><p>A common regression metric measuring the average size of prediction errors. RMSE squares errors before averaging, meaning large mistakes are penalised more heavily. Lower RMSE indicates predictions are closer to actual realised volatility values.</p></div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='card'><h3> Rolling Mean</h3><p>A moving average computed over recent time windows. Rolling statistics smooth noisy market behaviour and help models capture short-term trends and volatility persistence.</p></div>", unsafe_allow_html=True)
+
