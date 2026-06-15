@@ -1,0 +1,329 @@
+---
+title: "DATA3888<br>Discipline Assessment 1: Reef"
+date: "`r Sys.Date()`"
+author: "530297639"
+bibliography: references.bib
+format: 
+  html: 
+    theme: lux
+    embed-resources: true
+    code-fold: true
+    code-tools: true
+table-of-contents: true 
+number-sections: true 
+---
+
+```{r, message='hide'}
+library(tidyverse)
+library(lattice)
+library(reshape2)
+library(ggplot2)
+library(knitr)
+library(leaflet)
+library(stringr)
+library(caret)
+library(randomForest)
+library(pROC)
+library(kableExtra)
+
+set.seed(3888)
+```
+
+
+# Exploratory Analysis
+The reef dataset was cleaned and filtered to include observations from 2014-2017 using libraries such as janitor [@janitor] and tidyverse [@tidyverse]. The variable tsa_frequency was highly right-skewed and was log transformed to reduce skewness. Only variables of interest were selected, and rows with missing values were removed.
+
+```{r, message='hide'}
+raw_data = read.csv("data/Reef_Check_with_cortad_variables_with_annual_rate_of_SST_change.csv")
+
+# cleaning up the data, filter the years
+bleachingData <- raw_data |> janitor::clean_names()
+
+data <- bleachingData %>% filter(year >= 2014 & year <= 2017) %>%
+  select(average_bleaching, temperature_mean, tsa_frequency, temperature_kelvin_standard_deviation, tsa_dhw_standard_deviation) %>% drop_na() %>% mutate(tsa_frequency = log(tsa_frequency + 1))
+
+```
+
+An initial exploratory analysis was conducted using a correlation heatmap (@fig-heat-map) and faceted scatter plots (@fig-scatter-plots). Both figures show generally weak linear relationships between average_bleaching and Farhan’s proposed variables. The correlation coefficients are all close to zero (@tbl-heat-map).
+
+```{r}
+#| label: fig-heat-map
+#| fig-cap: "Correlation heat map"
+
+corr_mat <- melt(cor(data))
+
+corr_mat <- corr_mat[as.numeric(corr_mat$Var1) < as.numeric(corr_mat$Var2), ]
+
+ggplot(data = corr_mat, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() + theme_minimal() + labs(fill = NULL) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        panel.grid = element_blank()) +
+  labs(x = NULL, y = NULL) + 
+  scale_fill_gradient2(low = "#2C3E50", mid = "#ECF0F1", high = "#E74C3C")
+  
+
+```
+
+
+```{r}
+#| label: tbl-heat-map
+# the correlation table
+target_corr <- cor(data)["average_bleaching", ]
+
+target_table <- data.frame(variable = names(target_corr),
+                           correlation = target_corr)
+
+target_table <- target_table[target_table$variable != "average_bleaching", ]
+
+target_table$correlation <- round(target_table$correlation, 3)
+
+kable(target_table, 
+      caption = "Correlation of Farhan's variables with average_bleaching",
+      col.names = c("Variable", "Correlation"), row.names = FALSE)
+```
+
+Among the variables, tsa_frequency has the highest correlation (0.150). This is also supported in the scatter plot, where it shows a slightly upward trend, suggesting that reefs with more frequent thermal stress may have more bleaching.
+
+```{r, message='hide'}
+#| label: fig-scatter-plots
+#| fig-cap: "Faceted scatter plots"
+
+long_data <- data %>%
+  pivot_longer(-average_bleaching,
+               names_to = "predictor",
+               values_to = "value")
+
+ggplot(long_data, aes(x = value, y = average_bleaching)) +
+  geom_point(color = "#2C3E50", alpha = 0.3) +
+  geom_smooth(method = "lm", color = "#E74C3C", se = FALSE) +
+  facet_wrap(~ predictor, scales = "free_x") +
+  theme_minimal() + theme(panel.grid = element_blank(),
+                          axis.line = element_line(linewidth = 0.2))
+```
+
+
+Overall, the exploratory analysis does not strongly support Farhan’s claim. While tsa_frequency shows some correlation, the remaining variables seem to have weak relationship with average_bleaching. Therefore, this suggests that average_bleaching might be influenced more by other environmental factors.
+
+
+
+# Visualisation
+To investigate which reefs were most affected by the 2014-2017 global bleaching event. An interactive map (@fig-world-map) was created to show the average proportion of coral bleaching between 2014-2017, enabling efficient exploration of spatial patterns [@leaflet].
+
+```{r, message='hide'}
+#| label: fig-world-map
+#| fig-cap: "Interactive map of the average proportion of coral bleaching from 2014-2017"
+
+map_data <- bleachingData %>% filter(year >= 2014 & year <= 2017) %>%
+  select(average_bleaching, temperature_mean, tsa_frequency,
+         temperature_kelvin_standard_deviation, tsa_dhw_standard_deviation,
+         longitude_degrees, latitude_degrees, state_province_island, reef_name) %>%
+  drop_na() %>%
+  group_by(reef_name, state_province_island, longitude_degrees, latitude_degrees) %>%
+  summarise(
+    average_bleaching = mean(average_bleaching),
+    temperature_mean = mean(temperature_mean),
+    tsa_frequency = mean(tsa_frequency),
+    temperature_kelvin_standard_deviation = mean(temperature_kelvin_standard_deviation),
+    tsa_dhw_standard_deviation = mean(tsa_dhw_standard_deviation)
+  ) %>% ungroup()
+  
+
+leaflet(data = map_data) %>%
+  addTiles() %>%
+  addCircleMarkers(
+    lng = ~longitude_degrees,
+    lat = ~latitude_degrees,
+    color = ~colorNumeric("Reds", domain = average_bleaching)(average_bleaching),
+    popup = ~paste0(
+      "<b>Reef:</b> ", reef_name,
+      "<br><b>Region:</b> ", state_province_island,
+      "<br><b>Avg Bleaching:</b> ", round(average_bleaching,2),
+      "<br><b>Temp Mean:</b> ", temperature_mean,
+      "<br><b>TSA Frequency:</b> ", tsa_frequency,
+      "<br><b>Temp SD:</b> ", temperature_kelvin_standard_deviation,
+      "<br><b>DHW SD:</b> ", tsa_dhw_standard_deviation
+    )
+  )
+```
+Each reef is shown spatially with colour intensity that indicates bleaching severity. Users can click on individual spots and view detailed information on the values of Farhan’s variables.
+
+
+To support the map, a bar chart (@fig-bar-top) highlights the top 10 reefs with the highest average bleaching. This allows a clearer comparison of the most severely affected sites. Using these two figures balance the spatial context with precise ranking, making it easier to identify the most affected coral reefs, the region it belongs to and the values of its environmental variables.
+
+
+
+```{r}
+#| label: fig-bar-top
+#| fig-cap: "Top 10 reefs with the highest average proportion of coral bleaching (2014-2017)" 
+
+bar_data <- map_data %>%
+  arrange(desc(average_bleaching)) %>%
+  slice_head(n = 10)
+
+bar_data$reef_label <- str_wrap(bar_data$reef_name, width = 20)
+
+ggplot(bar_data, aes(x = reorder(reef_label, average_bleaching), y = average_bleaching)) +
+  geom_col(fill = "#E74C3C", width = 0.3) +
+  coord_flip() + 
+  labs(x = "Reef Name", y = "Average Proportion of Bleaching") +
+  theme_minimal() + theme(panel.grid = element_blank(),
+                          axis.line = element_line(linewidth = 0.2))
+  
+```
+
+The results show that most of the affected reefs are located across multiple tropical regions, particularly in Southeast Asia, Northern Australia as well as parts of the Caribbean. While these regions are typically associated with higher sea surface temperatures, the exploratory analysis in Part 1 shows weak correlations between mean_temperature and average_bleaching, this suggests that there may be other factors that would explain the spatial patterns observed.
+
+
+# Model Building and Evaluation
+For the models to predict the presence of coral bleaching, average_bleaching was converted into binary where 0 indicated no bleaching and 1 indicated bleaching present. After cleaning up the data, it was split into training (70%) and testing (30%).
+
+```{r, message='hide'}
+# converting average_bleaching to binary
+bleachingData <- bleachingData %>%
+  mutate(bleaching_present = ifelse(average_bleaching > 0, 1, 0), tsa_frequency = log(tsa_frequency + 1))
+
+#these are all the variables
+bdata <- bleachingData %>%
+  select(bleaching_present, temperature_mean, clim_sst, windspeed,
+         rate_of_sst_change, ssta, ssta_dhw_standard_deviation,
+         ssta_dhw, tsa, tsa_standard_deviation, tsa_dhw, depth,
+         diversity, latitude_degrees, longitude_degrees,
+         tsa_frequency, temperature_kelvin_standard_deviation, 
+         tsa_dhw_standard_deviation,) %>%
+  drop_na()
+
+# split the train/test using bdata
+train_index <- caret::createDataPartition(bdata$bleaching_present, p = 0.7, list = FALSE)
+train_bdata <- bdata[train_index,]
+test_bdata <- bdata[-train_index,]
+
+
+#test and train set for model data
+train_mdata <- train_bdata %>% select(-tsa_frequency, 
+                                      -temperature_kelvin_standard_deviation, 
+                                      -tsa_dhw_standard_deviation)
+
+test_mdata <- test_bdata %>% select(-tsa_frequency, 
+                                      -temperature_kelvin_standard_deviation, 
+                                      -tsa_dhw_standard_deviation)
+```
+
+
+First, a logistic regression model was built using Farhan’s four variables. The model’s performance was assessed on the test set using accuracy and AUC, since it measures well the model is at distinguishing bleaching and no bleaching [@auc]. Farhan’s model did not perform too well (accuracy = 0.660, AUC = 0.557), suggesting Farhan’s selected variables are probably not the best selection to use.
+
+```{r, message='hide'}
+# Farhan's model
+Fmodel <- glm(bleaching_present ~ temperature_mean + tsa_frequency +
+               temperature_kelvin_standard_deviation + 
+               tsa_dhw_standard_deviation,
+              data = train_bdata,
+              family = binomial)
+
+
+# predict the model
+prob1 <- predict(Fmodel, test_bdata, type = "response")
+pred1 <- ifelse(prob1 > 0.5, 1, 0)
+
+# accuracy
+acc1 <- mean(pred1 == test_bdata$bleaching_present)
+
+#AUC
+roc1 <- roc(test_bdata$bleaching_present, prob1)
+auc1 <- auc(roc1)
+
+```
+
+An alternative approach is to use stepwise logistic regression. The stepwise feature selection method was used to get a better set of predictors, and a logistic regression model is then built using the selected predictors. This model has a slightly better performance compared to Farhan’s model (accuracy = 0.680, AUC = 0.641). However, it could still be improved.
+
+```{r, message='hide'}
+# stepwise
+train_mdata$bleaching_present <- as.factor(train_mdata$bleaching_present)
+test_mdata$bleaching_present <- as.factor(test_mdata$bleaching_present)
+
+M1 = glm(bleaching_present ~ ., 
+         data = train_mdata, family = binomial) 
+
+Smodel = step(M1, direction = "both", trace = F)
+
+
+# predict the model
+prob2 <- predict(Smodel, test_mdata, type = "response")
+pred2 <- ifelse(prob2 > 0.5, 1, 0)
+
+# accuracy
+acc2 <- mean(pred2 == test_mdata$bleaching_present)
+
+#AUC
+roc2 <- roc(test_mdata$bleaching_present, prob2)
+auc2 <- auc(roc2)
+```
+
+Finally, random forest was used for a non linear approach. This model achieved the strongest performance out of the three (accuracy = 0.775, AUC = 0.844). The ROC curve (@fig-roc) also supports this by showing substantially better discrimination compared to the other models. The random forest model identified geographical variables such as the latitude and longitude, along with the tsa and ssta as the most important predictors (@fig-rf). This differs from Farhan's selected variables, which did not include any geographic factor.
+
+```{r, message='hide'}
+# random forest
+rfmodel <- randomForest(bleaching_present ~., data = train_mdata, ntree = 100)
+
+#predict
+prob_rf <- predict(rfmodel, test_mdata, type = "prob")[,2]
+pred_rf <- ifelse(prob_rf > 0.5, 1, 0)
+
+acc_rf <- mean(pred_rf == test_mdata$bleaching_present)
+roc3 <- roc(test_mdata$bleaching_present, prob_rf)
+auc_rf <- auc(roc3)
+
+```
+```{r}
+#| label: fig-rf
+#| fig-cap: "Variable importance plot from rfmodel showing most influential predictors" 
+#| 
+varImpPlot(rfmodel, main = NULL)
+```
+
+```{r}
+#| label: tbl-auc
+# table of the acc and auc of the models
+
+results <- data.frame(Model = c("Farhan's", "Stepwise Logistic", "Random Forest"),
+                      Accuracy = c(acc1, acc2, acc_rf),
+                      AUC = c(auc1, auc2, auc_rf))
+
+
+kable(results, digits = 3, caption = "Model Performance") %>%
+  row_spec(3, bold = TRUE)
+```
+
+
+
+```{r}
+#| label: fig-roc
+#| fig-cap: "ROC curve comparison"
+
+#plot ROC curve (compare the models)
+plot(roc1, col = "#2C3E50", main = NULL)
+lines(roc2, col = "#1ABC9C")
+lines(roc3, col = "#E74C3C")
+
+legend("bottomright", legend = c("Farhan", "Stepwise", "Random Forest"),
+       col = c("#2C3E50", "#1ABC9C", "#E74C3C"),
+       lwd = 2)
+
+```
+
+Overall, the classification model built using Farhan’s variables was not the best selection to use. Instead, the random forest model provides the best predictive performance. This suggests that coral bleaching is influenced by complex, non linear relationships that are not well captured by linear models, and that additional environmental factors are important for accurate prediction.
+
+
+
+
+# References
+
+
+
+
+
+
+
+
+
+
+
